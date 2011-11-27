@@ -7,6 +7,7 @@ import os
 import random
 import string
 import shutil
+import sys
 
 parser = argparse.ArgumentParser(description='Scan and start OCR.')
 parser.add_argument('-o', 
@@ -72,7 +73,7 @@ def optimize():
 	if (os.path.exists(TempFile + '.png') == True):
 		os.remove(TempFile + '.tiff')
 	else:
-		print('Error while optimizing')
+		sys.exit('Error while optimizing')
 
 # Will do ocr on a single image file.
 def ocr(language, verbose):
@@ -86,7 +87,8 @@ def ocr(language, verbose):
 def CleanUp():
 	os.remove(TempFile + '.png')
 	os.remove(TempFile + '.hOCR')
-	shutil.rmtree(TempFile + '_files')
+	if os.path.exists(TempFile + '_files'):
+		shutil.rmtree(TempFile + '_files')
 
 
 def main():
@@ -101,20 +103,19 @@ def main():
 	# Set Verbosity
 	if (args.verbose == False):
 		StringVerbose = '>/dev/null 2>&1'
-		OCRVerbose = '-quiet'
 	else:
 		StringVerbose = ''
-		OCRVerbose = ''
 	
 	# Start if file does not exist
-	if ( (os.path.exists(SaveFile + '.pdf') == False and args.scanonly == False) or (os.path.exists(SaveFile + '.jpg') == False and args.scanonly == True) ):
-		scan(args.resolution, args.width, args.height, args.progress, args.scanonly)
-		
-		if (args.scanonly == False):
-			optimize()
-			ocr(args.language, StringVerbose)
-	else:
-		print('Output file exists.')
+	if ( (os.path.exists(SaveFile + '.pdf') == True and args.scanonly == False) 
+	or (os.path.exists(SaveFile + '.jpg') == True and args.scanonly == True) ):
+		sys.exit('Output file exists.')
 
+	scan(args.resolution, args.width, args.height, args.progress, args.scanonly)
 
-main()
+	if (args.scanonly == False):
+		optimize()
+		ocr(args.language, StringVerbose)
+
+if __name__ == "__main__":
+		main()
