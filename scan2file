@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Depends on:
+sane
+cuneiform
+hocr2pdf and optimize2bw (both part of exactimage)
+stapler
+
+
+"""
+
 import argparse
 import subprocess
 import os
@@ -30,17 +40,29 @@ parser.add_argument('-sw',
 					dest='width',
 					default='211', 
 					help='Width of document (default: 211mm - A4)')
-parser.add_argument('-so', 
-					'--scan-only', 
-					dest='scanonly',
-					action='store_true',
-					default=False, 
-					help='Do not ocr, just scan.')
 parser.add_argument('-l', 
 					'--language', 
 					dest='language',
 					default='ger', 
 					help='Language to use for OCR (default: german)')
+parser.add_argument('-c', 
+					'--color', 
+					dest='color',
+					action='store_true',
+					default=False, 
+					help='Preserve colors (Do not optimize image) (default: no)')
+parser.add_argument('-so', 
+					'--scan-only', 
+					dest='scanonly',
+					action='store_true',
+					default=False, 
+					help='Do not ocr, just scan (default: no)')
+parser.add_argument('-m', 
+					'--multi', 
+					dest='multi',
+					action='store_true',
+					default=False, 
+					help='Create a multi-page PDF from more than one scan (default: no)')
 parser.add_argument('-v', 
 					'--verbose', 
 					dest='verbose',
@@ -52,9 +74,9 @@ parser.add_argument('-p',
 					dest='progress',
 					action='store_true',
 					default=True, 
-					help='Show scan progress.')
+					help='Show scan progress (default: yes)')
 					
-def scan(resolution, width, height, progress, scanonly):
+def scan(resolution, width, height, progress, scanonly=False):
 	if (progress == True):
 			StringProgress = ' -p'
 	else:
@@ -76,9 +98,9 @@ def optimize():
 		sys.exit('Error while optimizing')
 
 # Will do ocr on a single image file.
-def ocr(language, verbose):
+def ocr(save, language, verbose):
 	subprocess.call('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.png '+verbose, shell=True)
-	subprocess.call('hocr2pdf -i '+TempFile+'.png -o '+SaveFile+'.pdf < ' +TempFile+ '.hOCR '+verbose, shell=True)
+	subprocess.call('hocr2pdf -i '+TempFile+'.png -o '+save+'.pdf < ' +TempFile+ '.hOCR '+verbose, shell=True)
 	
 	CleanUp()
 
@@ -97,7 +119,8 @@ def main():
 	global TempFile, SaveFile, StringVerbose
 	
 	# Path and name (random string) of temporary file without extension
-	TempFile = '/tmp/scanner_'+''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6)) + args.output
+	RandomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6))
+	TempFile = '/tmp/scanner_'+ RandomString + args.output
 	SaveFile = os.getcwd() + '/' + args.output
 	
 	# Set Verbosity
@@ -111,11 +134,33 @@ def main():
 	or (os.path.exists(SaveFile + '.jpg') == True and args.scanonly == True) ):
 		sys.exit('Output file exists.')
 
+	if  (args.multi == True):
+		Pages = PagesOrig = int(input('How many pages does your document contain? '))
+		
+		for Pages in range(1, Pages+1):
+			# Get PageNR in TempFile
+			TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(Pages)
+			print('Processing page '+str(Pages)+'...')
+			Pages -= 1
+			
+			# Invoke scan, optimize and OCR
+			scan(args.resolution, args.width, args.height, args.progress)
+			optimize()
+			ocr(TempFile+'_ready', args.language, StringVerbose)
+			
+			# Wait for user to continue
+			if (Pages < PagesOrig-1):
+				input('Hit Enter to scan the next page...')
+		
+		# Merge PDF's and exit
+		subprocess.call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
+		sys.exit(0)
+
 	scan(args.resolution, args.width, args.height, args.progress, args.scanonly)
 
 	if (args.scanonly == False):
 		optimize()
-		ocr(args.language, StringVerbose)
+		ocr(SaveFile, args.language, StringVerbose)
 
 if __name__ == "__main__":
 		main()
