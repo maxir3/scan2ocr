@@ -7,133 +7,305 @@ sane
 cuneiform
 hocr2pdf and optimize2bw (both part of exactimage)
 stapler
+python-pyparallel to use parallel processing (i.e. OCR on multiple pdf files)
 
+
+Graphic formats used:
+	tiff:	scanned raw data
+	png:	temporary files and image type converted into the final pdf document
+	pdf:	final output
 
 """
 
+## Configuration variables
+
+device='plustek'			# Sane device refernece, see scanimage -L for available devices
+SaveFormatScanOnly='jpg'	# Imageformat to use in scan-only mode
+
+# Try to catch ctrl-c in a cleaner way
+try:
+	import signal
+	def signal_handler(signal, frame):
+		print("\nInterrupted")
+		try:
+			sys.exit(2)
+		except NameError:
+			import sys
+			sys.exit(2)
+		signal.signal(signal.SIGINT, signal_handler)
+except KeyboardInterrupt:
+	print("\nInterrupted")
+	try:
+		sys.exit(1)
+	except NameError:
+		import sys
+		sys.exit(1)
+
 import argparse
-import subprocess
-import os
+from subprocess import call, Popen, PIPE
+import os			# env
 import random
 import string
 import shutil
 import sys
+import shlex		# execute() function
+#import pp
 
 parser = argparse.ArgumentParser(description='Scan and start OCR.')
-parser.add_argument('-o', 
-					'--output', 
+
+## General Options ##
+
+parser.add_argument('-o',
+					'--output',
 					dest='output',
 					help='Output filename',
+					required=False)
+parser.add_argument('-m',
+					'--mode',
+					dest='mode',
+					default='scanocr',
+					help='Mode to use. Values are: scanocr, scan, ocr (default: scanocr)',
 					required=True)
-parser.add_argument('-r', 
-					'--resolution', 
+parser.add_argument('-v',
+					'--verbose',
+					dest='verbose',
+					action='store_true',
+					default=False,
+					help='Be verbose.')
+
+## Scanner Options ##
+
+parser.add_argument('-r',
+					'--resolution',
 					dest='resolution',
-					default='300', 
+					default='300',
 					help='Resolution to use for scan (default: 300dpi)')
 parser.add_argument('-sh',
-					'--scanheight', 
+					'--scanheight',
 					dest='height',
-					default='297', 
+					default='297',
 					help='Height of document (default: 297mm - A4)')
-parser.add_argument('-sw', 
-					'--scanwidth', 
+parser.add_argument('-sw',
+					'--scanwidth',
 					dest='width',
-					default='211', 
+					default='211',
 					help='Width of document (default: 211mm - A4)')
-parser.add_argument('-l', 
-					'--language', 
-					dest='language',
-					default='ger', 
-					help='Language to use for OCR (default: german)')
-parser.add_argument('-c', 
-					'--color', 
+parser.add_argument('-p',
+					'--progress',
+					dest='progress',
+					action='store_true',
+					default=True,
+					help='Show scan progress (default: yes)')
+parser.add_argument('-op',
+					'--optimize',
+					dest='optimize',
+					action='store_true',
+					default=False,
+					help='When scanning only: Also optimize after scan (default: no)')
+
+## Converting Options ##
+
+parser.add_argument('-c',
+					'--color',
 					dest='color',
 					action='store_true',
 					default=False, 
 					help='Preserve colors (Do not optimize image) (default: no)')
-parser.add_argument('-so', 
-					'--scan-only', 
-					dest='scanonly',
-					action='store_true',
-					default=False, 
-					help='Do not ocr, just scan (default: no)')
-parser.add_argument('-m', 
-					'--multi', 
+
+## OCR Options ##
+
+parser.add_argument('-mu',
+					'--multi',
 					dest='multi',
 					action='store_true',
-					default=False, 
+					default=False,
 					help='Create a multi-page PDF from more than one scan (default: no)')
-parser.add_argument('-v', 
-					'--verbose', 
-					dest='verbose',
-					action='store_true',
-					default=False, 
-					help='Be verbose.')
-parser.add_argument('-p', 
-					'--progress', 
-					dest='progress',
-					action='store_true',
-					default=True, 
-					help='Show scan progress (default: yes)')
-					
-def scan(resolution, width, height, progress, scanonly=False):
+parser.add_argument('-l',
+					'--language',
+					dest='language',
+					default='ger',
+					help='Language to use for OCR (default: german)')
+
+
+
+
+
+# Executes given command, returns stdout/stderr
+def execute(cmd, stdin='', env=''):
+	cmd = shlex.split(cmd)
+
+	if env == '':
+		p = Popen(cmd, stdout=PIPE, stdin=PIPE, stderr=PIPE)
+	else:
+		p = Popen(cmd, stdout=PIPE, stdin=PIPE, stderr=PIPE, env=env)
+
+	stdout, stderr = p.communicate(stdin)
+	returncode = p.wait()
+
+	if returncode == 0:
+		return (0, stdout)
+	else:
+		return (returncode, str(stderr))
+
+# Executes scanimage (sane)
+def scan(resolution, width, height, progress):
+
+	print('Scan: \t\t', end='')
+
+	progress = False
+
 	if (progress == True):
 			StringProgress = ' -p'
 	else:
 			StringProgress = ''
-	
-	subprocess.call('scanimage --format=tiff -d plustek --calibration-cache=yes --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' >' +TempFile+ '.tiff', shell=True)
-	
-	if (scanonly == True):
-		subprocess.call('convert '+TempFile+'.tiff '+SaveFile+'.jpg', shell=True)
-		os.remove(TempFile + '.tiff')
 
+	call('scanimage --format=tiff -d plustek --calibration-cache=yes --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' >' +TempFile+ '.tiff', shell=True)
 
-def optimize():
-	subprocess.call('optimize2bw -i ' +TempFile+ '.tiff -o ' +TempFile+ '.png', shell=True)
-	
-	if (os.path.exists(TempFile + '.png') == True):
-		os.remove(TempFile + '.tiff')
+	print('Done.')
+
+	"""
+	p = execute('/usr/bin/scanimage --format=tiff -d ' + device + ' --calibration-cache=yes --resolution ' + resolution + ' -x ' + width + ' -y ' + height + ' ' + StringProgress)
+
+	if p[0] != 0:
+		sys.exit ('Error! ' + str(p[1]))
 	else:
-		sys.exit('Error while optimizing')
-
-# Will do ocr on a single image file.
-def ocr(save, language, verbose):
-	subprocess.call('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.png '+verbose, shell=True)
-	subprocess.call('hocr2pdf -i '+TempFile+'.png -o '+save+'.pdf < ' +TempFile+ '.hOCR '+verbose, shell=True)
+		print('Done.')
 	
+	"""
+
+# Optimize Image to black/white, will write a png file
+def optimizeImage():
+
+	print('Optimization: \t', end='')
+
+	p = execute('/usr/bin/optimize2bw -i ' +TempFile+ '.tiff -o ' +TempFile+ '.png')
+
+	if p[0] != 0:
+		sys.exit ('Error! ' + p[1])
+	else:
+		print('Done.')
+
+
+# Convert tiff to png Image (used when colors should be preserved)
+def convertToImage():
+
+	print('Convert: \t', end='')
+
+	p = execute('convert '+ TempFile + '.tiff ' + TempFile + '.png')
+
+	if p[0] != 0:
+		sys.exit('Error converting tiff to png: ' + p[1])
+	else:
+		print('Done.')
+
+# Do ocr on a single image file
+def ocr(save, language):
+
+	print('OCR: \t', end='')
+
+	# MALLOC_CHECK_ prevents abort due to glibc errors
+	# Hilft noch nicht ganz!
+	#call('MALLOC_CHECK_=0 cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.png '+verbosity(), shell=True)
+
+	my_env = os.environ
+	my_env["MALLOC_CHECK_"] = '0'
+	#my_env.get("PATH", '')
+
+	p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.png', '', my_env)
+
+	if p[0] != 0:
+		sys.exit ('Error! ' + p[1])
+	else:
+		print('Done.')
+
+
+	# Create PDF || -s: Alternative word-grouping
+	call('hocr2pdf -s -i '+TempFile+'.png -o '+save+'.pdf < ' +TempFile+ '.hOCR ', shell=True)
+
 	CleanUp()
 
 
-# Remove garbage files
+# Do some final optimizing on output PDF
+def OptimizePDF():
+
+	print('PDF Optimization: \t', end='')
+
+	p = execute('/usr/bin/pdfopt ' + TempFile + '.pdf ' + TempFile + '.pdf')
+
+	if p[0] != 0:
+		print ('Error! ' + p[1])
+	else:
+		print('Done.')
+
+
+
+# Remove garbage files, if existing
 def CleanUp():
-	os.remove(TempFile + '.png')
-	os.remove(TempFile + '.hOCR')
+	if os.path.exists(TempFile + '.tiff'):
+		os.remove(TempFile + '.tiff')
+
+	if os.path.exists(TempFile + '.png'):
+		os.remove(TempFile + '.png')
+
+	if os.path.exists(TempFile + '.hOCR'):
+		os.remove(TempFile + '.hOCR')
+
 	if os.path.exists(TempFile + '_files'):
 		shutil.rmtree(TempFile + '_files')
 
+# Set Verbosity string
+def verbosity():
+	if (verbose == False):
+		return '>/dev/null 2>&1'
+	else:
+		return ''
 
+# Returns True in case the output file already exists.
+def OutputFileExists(SaveFile):
+	if ( (os.path.exists(SaveFile + '.pdf') == True and args.mode == 'scanocr') 
+	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and args.mode == 'scan') ):
+		return True
+	else:
+		# everything allright.
+		return False
+		
+
+# Main program
 def main():
 	args = parser.parse_args()
-	
-	global TempFile, SaveFile, StringVerbose
-	
+
+	# Mode switcher - ask for output name if not given
+	print('Current Mode: ', end='')
+	if args.mode == 'scanocr':
+		print('Scan and OCR')
+		if args.output == None:
+			args.output = str(input('Please give some output filename (without .pdf): '))
+	elif args.mode == 'scan':
+		print('Scan only')
+		if args.output == None:
+			args.output = str(input('Please give some output filename (without .pdf): '))
+	elif args.mode == 'ocr':
+		print('OCR only')
+		print('FEHLT NOCH')
+		sys.exit(0) # For now
+	else:
+		sys.exit('No valid mode given. Please choose one of: scanocr, scan, ocr')
+
+	global TempFile, SaveFile, verbose
+
+	# Process verbose-switch ...
+	verbose = args.verbose
+
 	# Path and name (random string) of temporary file without extension
 	RandomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6))
 	TempFile = '/tmp/scanner_'+ RandomString + args.output
 	SaveFile = os.getcwd() + '/' + args.output
-	
-	# Set Verbosity
-	if (args.verbose == False):
-		StringVerbose = '>/dev/null 2>&1'
-	else:
-		StringVerbose = ''
-	
-	# Start if file does not exist
-	if ( (os.path.exists(SaveFile + '.pdf') == True and args.scanonly == False) 
-	or (os.path.exists(SaveFile + '.jpg') == True and args.scanonly == True) ):
+
+	# if not in OCR mode, check if output file already exists
+	if args.mode != 'ocr' and OutputFileExists(SaveFile) == True:
 		sys.exit('Output file exists.')
 
+	# Create multi-page OCR'ed PDF
 	if  (args.multi == True):
 		Pages = PagesOrig = int(input('How many pages does your document contain? '))
 		
@@ -142,25 +314,67 @@ def main():
 			TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(Pages)
 			print('Processing page '+str(Pages)+'...')
 			Pages -= 1
-			
+
 			# Invoke scan, optimize and OCR
 			scan(args.resolution, args.width, args.height, args.progress)
-			optimize()
-			ocr(TempFile+'_ready', args.language, StringVerbose)
-			
+
+			if (args.color == True):
+				convertToImage()
+			else:
+				optimizeImage()
+
+			ocr(TempFile+'_ready', args.language)
+
 			# Wait for user to continue
 			if (Pages < PagesOrig-1):
 				input('Hit Enter to scan the next page...')
-		
+
 		# Merge PDF's and exit
-		subprocess.call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
+		call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
+
+		# Wie wildcard ersetzen?
+		#Popen(['stapler', 'cat', '/tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf', SaveFile+'.pdf'])
+
 		sys.exit(0)
 
-	scan(args.resolution, args.width, args.height, args.progress, args.scanonly)
+	# Normal operation if not in multipage-mode, scan first.
+	scan(args.resolution, args.width, args.height, args.progress)
 
-	if (args.scanonly == False):
-		optimize()
-		ocr(SaveFile, args.language, StringVerbose)
+	# If scan-only is invoked, exit after scan, eventually optimize
+	if (args.mode == 'scan'):
+
+		print('Convert: \t', end='')
+
+		# Do optimize if parameter is given
+		if (args.optimize == True):
+			optimizeImage()
+			# mv .png -> Savefile.png
+		else:
+			p = execute('convert '+TempFile+'.tiff '+SaveFile+'.jpg')
+
+			if p[0] != 0:
+				sys.exit ('Error converting tiff to jpg: ' + p[1])
+			else:
+				print('Done.')
+
+		CleanUp()
+
+		# End program
+		sys.exit(0)
+
+
+	# Finally the "Classic" way: optimize and ocr
+	if (args.color == False):
+		optimizeImage()
+	else:
+		# user wants to preserve colors, just convert temp.tiff to save.jpg
+		convertToImage()
+
+	ocr(SaveFile, args.language)
+
+	sys.exit(0)
+
+
 
 if __name__ == "__main__":
 		main()
