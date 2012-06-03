@@ -12,7 +12,7 @@ python-pyparallel to use parallel processing (i.e. OCR on multiple pdf files)
 
 Graphic formats used:
 	tiff:	scanned raw data
-	png:	temporary files and image type converted into the final pdf document
+	png:	temporary files and image type converted into the final pdf document - PROBLEMS WITH CUNEIFORM AS OF 2012/06/03
 	pdf:	final output
 
 """
@@ -173,12 +173,12 @@ def scan(resolution, width, height, progress):
 	
 	"""
 
-# Optimize Image to black/white, will write a png file
+# Optimize Image to black/white, will write a new tiff file
 def optimizeImage():
 
 	print('Optimization: \t', end='')
 
-	p = execute('/usr/bin/optimize2bw -i ' +TempFile+ '.tiff -o ' +TempFile+ '.png')
+	p = execute('/usr/bin/optimize2bw -i ' +TempFile+ '.tiff -o ' +TempFile+ '.bw.tiff')
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
@@ -186,15 +186,15 @@ def optimizeImage():
 		print('Done.')
 
 
-# Convert tiff to png Image (used when colors should be preserved)
+# Convert tiff to jpg Image (used when colors should be preserved)
 def convertToImage():
 
 	print('Convert: \t', end='')
 
-	p = execute('convert '+ TempFile + '.tiff ' + TempFile + '.png')
+	p = execute('convert '+ TempFile + '.tiff ' + TempFile + '.jpg')
 
 	if p[0] != 0:
-		sys.exit('Error converting tiff to png: ' + p[1])
+		sys.exit('Error converting tiff to jpg: ' + p[1])
 	else:
 		print('Done.')
 
@@ -205,13 +205,13 @@ def ocr(save, language):
 
 	# MALLOC_CHECK_ prevents abort due to glibc errors
 	# Hilft noch nicht ganz!
-	#call('MALLOC_CHECK_=0 cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.png '+verbosity(), shell=True)
+	#call('MALLOC_CHECK_=0 cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff '+verbosity(), shell=True)
 
 	my_env = os.environ
 	my_env["MALLOC_CHECK_"] = '0'
 	#my_env.get("PATH", '')
 
-	p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.png', '', my_env)
+	p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff', '', my_env)
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
@@ -220,7 +220,7 @@ def ocr(save, language):
 
 
 	# Create PDF || -s: Alternative word-grouping
-	call('hocr2pdf -s -i '+TempFile+'.png -o '+save+'.pdf < ' +TempFile+ '.hOCR ', shell=True)
+	call('hocr2pdf -s -i '+TempFile+'.bw.tiff -o '+save+'.pdf < ' +TempFile+ '.hOCR ', shell=True)
 
 	CleanUp()
 
@@ -244,8 +244,8 @@ def CleanUp():
 	if os.path.exists(TempFile + '.tiff'):
 		os.remove(TempFile + '.tiff')
 
-	if os.path.exists(TempFile + '.png'):
-		os.remove(TempFile + '.png')
+	if os.path.exists(TempFile + '.bw.tiff'):
+		os.remove(TempFile + '.bw.tiff')
 
 	if os.path.exists(TempFile + '.hOCR'):
 		os.remove(TempFile + '.hOCR')
@@ -348,7 +348,7 @@ def main():
 		# Do optimize if parameter is given
 		if (args.optimize == True):
 			optimizeImage()
-			# mv .png -> Savefile.png
+			# mv .bw.tiff -> Savefile.bw.tiff
 		else:
 			p = execute('convert '+TempFile+'.tiff '+SaveFile+'.jpg')
 
