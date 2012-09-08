@@ -19,7 +19,7 @@ Graphic formats used:
 
 ## Configuration variables
 
-device='plustek'			# Sane device refernece, see scanimage -L for available devices
+device='genesys'			# Sane device refernece, see scanimage -L for available devices
 SaveFormatScanOnly='jpg'	# Imageformat to use in scan-only mode
 
 # Try to catch ctrl-c in a cleaner way
@@ -158,8 +158,8 @@ def scan(resolution, width, height, progress):
 			StringProgress = ' -p'
 	else:
 			StringProgress = ''
-
-	call('scanimage --format=tiff -d plustek --calibration-cache=yes --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' >' +TempFile+ '.tiff', shell=True)
+#--calibration-cache=yes
+	call('scanimage --format=tiff -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' >' +TempFile+ '.tiff', shell=True)
 
 	print('Done.')
 
@@ -211,7 +211,16 @@ def ocr(save, language):
 	my_env["MALLOC_CHECK_"] = '0'
 	#my_env.get("PATH", '')
 
-	p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff', '', my_env)
+	# To use cuneiform as OCR-engine
+	#p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff', '', my_env)
+	
+	# To use tesseract as OCR-engine
+	if language == 'ger':
+		language = 'deu'
+
+	p = execute('tesseract ' +TempFile+ '.bw.tiff ' +TempFile+ ' -l ' +language+ ' hocr', '', my_env)
+	# Rename temporary file created by tesseract (.html -> .hOCR)
+	os.rename(TempFile+'.html', TempFile+'.html'[:-4] + "hOCR")
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
@@ -253,6 +262,10 @@ def CleanUp():
 	if os.path.exists(TempFile + '_files'):
 		shutil.rmtree(TempFile + '_files')
 
+	# will need glob.glob ?
+	#if os.path.exists(TempFile + '_ready.pdf'):
+	#	shutil.rmtree(TempFile + '_ready.pdf')
+
 # Set Verbosity string
 def verbosity():
 	if (verbose == False):
@@ -262,6 +275,7 @@ def verbosity():
 
 # Returns True in case the output file already exists.
 def OutputFileExists(SaveFile):
+	args = parser.parse_args()
 	if ( (os.path.exists(SaveFile + '.pdf') == True and args.mode == 'scanocr') 
 	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and args.mode == 'scan') ):
 		return True
@@ -323,7 +337,14 @@ def main():
 			else:
 				optimizeImage()
 
-			ocr(TempFile+'_ready', args.language)
+			# Do OCR or convert to .pdf without ocr'ing
+			if args.mode != 'scan':
+				ocr(TempFile+'_ready', args.language)
+			else:
+				if (args.color == True):
+					call('convert '+TempFile+'.tiff '+TempFile+'_ready.pdf', shell=True)
+				else:
+					call('convert '+TempFile+'.bw.tiff '+TempFile+'_ready.pdf', shell=True)
 
 			# Wait for user to continue
 			if (Pages < PagesOrig-1):
