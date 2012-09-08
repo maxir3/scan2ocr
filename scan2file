@@ -96,12 +96,6 @@ parser.add_argument('-p',
 					action='store_true',
 					default=True,
 					help='Show scan progress (default: yes)')
-parser.add_argument('-op',
-					'--optimize',
-					dest='optimize',
-					action='store_true',
-					default=False,
-					help='When scanning only: Also optimize after scan (default: no)')
 
 ## Converting Options ##
 
@@ -109,7 +103,7 @@ parser.add_argument('-c',
 					'--color',
 					dest='color',
 					action='store_true',
-					default=False, 
+					default=False,
 					help='Preserve colors (Do not optimize image) (default: no)')
 
 ## OCR Options ##
@@ -238,7 +232,7 @@ def ocr(save, language):
 def OptimizePDF():
 
 	print('PDF Optimization: \t', end='')
-
+	
 	p = execute('/usr/bin/pdfopt ' + TempFile + '.pdf ' + TempFile + '.pdf')
 
 	if p[0] != 0:
@@ -367,7 +361,7 @@ def main():
 		print('Convert: \t', end='')
 
 		# Do optimize if parameter is given
-		if (args.optimize == True):
+		if (args.color == False):
 			optimizeImage()
 			# mv .bw.tiff -> Savefile.bw.tiff
 		else:
