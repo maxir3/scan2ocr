@@ -19,7 +19,7 @@ Graphic formats used:
 
 ## Configuration variables
 
-device='genesys'			# Sane device refernece, see scanimage -L for available devices
+device='plustek'			# Sane device refernece, see scanimage -L for available devices
 SaveFormatScanOnly='jpg'	# Imageformat to use in scan-only mode
 
 # Try to catch ctrl-c in a cleaner way
@@ -270,11 +270,11 @@ def verbosity():
 # Returns True in case the output file already exists.
 def OutputFileExists(SaveFile):
 	args = parser.parse_args()
-	if ( (os.path.exists(SaveFile + '.pdf') == True and args.mode == 'scanocr') 
+
+	if ( (os.path.exists(SaveFile + '.pdf') == True and ( args.mode == 'scanocr' or args.mode == 'ocr' ) ) 
 	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and args.mode == 'scan') ):
 		return True
 	else:
-		# everything allright.
 		return False
 		
 
@@ -309,8 +309,8 @@ def main():
 	TempFile = '/tmp/scanner_'+ RandomString + args.output
 	SaveFile = os.getcwd() + '/' + args.output
 
-	# if not in OCR mode, check if output file already exists
-	if args.mode != 'ocr' and OutputFileExists(SaveFile) == True:
+	# check if output file exists
+	if OutputFileExists(SaveFile) == True:
 		sys.exit('Output file exists.')
 
 	# Create multi-page OCR'ed PDF
@@ -331,7 +331,7 @@ def main():
 			else:
 				optimizeImage()
 
-			# Do OCR or convert to .pdf without ocr'ing
+			# Do OCR or convert to pdf without ocr'ing
 			if args.mode != 'scan':
 				ocr(TempFile+'_ready', args.language)
 			else:
@@ -342,7 +342,7 @@ def main():
 
 			# Wait for user to continue
 			if (Pages < PagesOrig-1):
-				input('Hit Enter to scan the next page...')
+				input('Hit enter to scan the next page (' + str(Pages)+1 + ')...')
 
 		# Merge PDF's and exit
 		call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
@@ -363,7 +363,6 @@ def main():
 		# Do optimize if parameter is given
 		if (args.color == False):
 			optimizeImage()
-			# mv .bw.tiff -> Savefile.bw.tiff
 		else:
 			p = execute('convert '+TempFile+'.tiff '+SaveFile+'.jpg')
 
