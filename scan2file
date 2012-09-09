@@ -168,27 +168,28 @@ def scan(resolution, width, height, progress):
 	"""
 
 # Optimize Image to black/white, will write a new tiff file
-def optimizeImage():
+def optimizeImage(bw):
 
 	print('Optimization: \t', end='')
 
-	p = execute('/usr/bin/optimize2bw -i ' +TempFile+ '.tiff -o ' +TempFile+ '.bw.tiff')
+	p = execute('/usr/bin/optimize2bw -i ' + TempFile + bw +'.tiff -o ' + TempFile + '.bw.tiff')
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
 	else:
 		print('Done.')
 
-
-# Convert tiff to jpg Image (used when colors should be preserved)
+# Convert tiff to SaveFormatScanOnly (used when scanning only)
 def convertToImage():
+	
+	global SaveFormatScanOnly
 
 	print('Convert: \t', end='')
 
-	p = execute('convert '+ TempFile + '.tiff ' + TempFile + '.jpg')
+	p = execute('convert '+TempFile+'.tiff '+SaveFile+'.'+SaveFormatScanOnly)
 
 	if p[0] != 0:
-		sys.exit('Error converting tiff to jpg: ' + p[1])
+		sys.exit ('Error converting tiff to ' + SaveFormatScanOnly + ': ' + p[1])
 	else:
 		print('Done.')
 
@@ -355,39 +356,25 @@ def main():
 	# Normal operation if not in multipage-mode, scan first.
 	scan(args.resolution, args.width, args.height, args.progress)
 
-	# If scan-only is invoked, exit after scan, eventually optimize
-	if (args.mode == 'scan'):
-
-		print('Convert: \t', end='')
-
-		# Do optimize if parameter is given
-		if (args.color == False):
-			optimizeImage()
-		else:
-			p = execute('convert '+TempFile+'.tiff '+SaveFile+'.jpg')
-
-			if p[0] != 0:
-				sys.exit ('Error converting tiff to jpg: ' + p[1])
-			else:
-				print('Done.')
-
-		CleanUp()
-
-		# End program
-		sys.exit(0)
-
-
-	# Finally the "Classic" way: optimize and ocr
+	# optimize
 	if (args.color == False):
 		optimizeImage()
+		blackwhite='.bw'
 	else:
-		# user wants to preserve colors, just convert temp.tiff to save.jpg
-		convertToImage()
+		blackwhite=''
 
-	ocr(SaveFile, args.language)
+	# convert .tiff to image-format
+	if (args.mode == 'scan'):
+		convertToImage(blackwhite)
 
+	# ocr
+	if (args.mode == 'scanocr'):
+		ocr(SaveFile, args.language)
+
+	CleanUp()
+
+	# End program
 	sys.exit(0)
-
 
 
 if __name__ == "__main__":
