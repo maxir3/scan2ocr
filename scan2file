@@ -318,6 +318,9 @@ def main():
 	if  (args.multi == True):
 		Pages = PagesOrig = int(input('How many pages does your document contain? '))
 		
+		if (Pages < 1):
+			sys.exit('Not a valid amount of pages.')
+		
 		for Pages in range(1, Pages+1):
 			# Get PageNR in TempFile
 			TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(Pages)
@@ -330,7 +333,7 @@ def main():
 			if (args.color == True):
 				convertToImage()
 			else:
-				optimizeImage()
+				optimizeImage('')
 
 			# Do OCR or convert to pdf without ocr'ing
 			if args.mode != 'scan':
@@ -343,7 +346,7 @@ def main():
 
 			# Wait for user to continue
 			if (Pages < PagesOrig-1):
-				input('Hit enter to scan the next page (' + str(Pages)+1 + ')...')
+				input('Hit enter to scan the next page (' + str(Pages+1) + ')...')
 
 		# Merge PDF's and exit
 		call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
