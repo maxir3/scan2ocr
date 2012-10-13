@@ -180,13 +180,13 @@ def optimizeImage(bw):
 		print('Done.')
 
 # Convert tiff to SaveFormatScanOnly (used when scanning only)
-def convertToImage():
+def convertToImage(bw):
 	
 	global SaveFormatScanOnly
 
 	print('Convert: \t', end='')
 
-	p = execute('convert '+TempFile+'.tiff '+SaveFile+'.'+SaveFormatScanOnly)
+	p = execute('convert '+TempFile + bw + '.tiff '+SaveFile+'.'+SaveFormatScanOnly)
 
 	if p[0] != 0:
 		sys.exit ('Error converting tiff to ' + SaveFormatScanOnly + ': ' + p[1])
@@ -331,7 +331,7 @@ def main():
 			scan(args.resolution, args.width, args.height, args.progress)
 
 			if (args.color == True):
-				convertToImage()
+				convertToImage('')
 			else:
 				optimizeImage('')
 
