@@ -20,6 +20,7 @@ Graphic formats used:
 ## Configuration variables
 
 device='plustek'			# Sane device refernece, see scanimage -L for available devices
+#device='genesys'			# Klaus Scanner
 SaveFormatScanOnly='jpg'	# Imageformat to use in scan-only mode
 
 # Try to catch ctrl-c in a cleaner way
@@ -59,13 +60,13 @@ parser.add_argument('-o',
 					'--output',
 					dest='output',
 					help='Output filename',
-					required=False)
+					required=True)
 parser.add_argument('-m',
 					'--mode',
 					dest='mode',
 					default='scanocr',
 					help='Mode to use. Values are: scanocr, scan, ocr (default: scanocr)',
-					required=True)
+					required=False)
 parser.add_argument('-v',
 					'--verbose',
 					dest='verbose',
@@ -259,7 +260,7 @@ def CleanUp():
 
 	# will need glob.glob ?
 	#if os.path.exists(TempFile + '_ready.pdf'):
-	#	shutil.rmtree(TempFile + '_ready.pdf')
+	#	os.remove(TempFile + '_ready.pdf')
 
 # Set Verbosity string
 def verbosity():
@@ -361,7 +362,7 @@ def main():
 
 	# optimize
 	if (args.color == False):
-		optimizeImage()
+		optimizeImage('')
 		blackwhite='.bw'
 	else:
 		blackwhite=''
