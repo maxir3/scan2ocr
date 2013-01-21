@@ -51,6 +51,7 @@ import shutil
 import sys
 import shlex		# execute() function
 #import pp
+import glob			# wildcard file remove
 
 parser = argparse.ArgumentParser(description='Scan and start OCR.')
 
@@ -227,7 +228,6 @@ def ocr(save, language):
 	# Create PDF || -s: Alternative word-grouping
 	call('hocr2pdf -s -i '+TempFile+'.bw.tiff -o '+save+'.pdf < ' +TempFile+ '.hOCR ', shell=True)
 
-	CleanUp()
 
 
 # Do some final optimizing on output PDF
@@ -243,24 +243,15 @@ def OptimizePDF():
 		print('Done.')
 
 
-
 # Remove garbage files, if existing
-def CleanUp():
-	if os.path.exists(TempFile + '.tiff'):
-		os.remove(TempFile + '.tiff')
+def CleanUp(filename = ''):
 
-	if os.path.exists(TempFile + '.bw.tiff'):
-		os.remove(TempFile + '.bw.tiff')
+	if (filename == ''):
+		filename = TempFile
 
-	if os.path.exists(TempFile + '.hOCR'):
-		os.remove(TempFile + '.hOCR')
+	for filename in glob.glob(filename + '*.*') :
+		os.remove(filename)
 
-	if os.path.exists(TempFile + '_files'):
-		shutil.rmtree(TempFile + '_files')
-
-	# will need glob.glob ?
-	#if os.path.exists(TempFile + '_ready.pdf'):
-	#	os.remove(TempFile + '_ready.pdf')
 
 # Set Verbosity string
 def verbosity():
@@ -268,6 +259,7 @@ def verbosity():
 		return '>/dev/null 2>&1'
 	else:
 		return ''
+
 
 # Returns True in case the output file already exists.
 def OutputFileExists(SaveFile):
@@ -352,10 +344,14 @@ def main():
 		# Merge PDF's and exit
 		call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
 
+		# Clean up temporary files
+		CleanUp('/tmp/scanner_'+ RandomString + args.output)
+
 		# Wie wildcard ersetzen?
 		#Popen(['stapler', 'cat', '/tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf', SaveFile+'.pdf'])
 
 		sys.exit(0)
+
 
 	# Normal operation if not in multipage-mode, scan first.
 	scan(args.resolution, args.width, args.height, args.progress)
