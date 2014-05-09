@@ -4,7 +4,7 @@
 """
 Depends on:
 sane
-cuneiform
+tesseract
 hocr2pdf and optimize2bw (both part of exactimage)
 stapler
 python-pyparallel to use parallel processing (i.e. OCR on multiple pdf files)
@@ -339,7 +339,7 @@ def main():
 
 			# Wait for user to continue
 			if (Pages < PagesOrig-1):
-				input('Hit enter to scan the next page (' + str(Pages+1) + ')...')
+				input('Hit enter to scan the next page (' + str(Pages+2) + ')...')
 
 		# Merge PDF's and exit
 		call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
