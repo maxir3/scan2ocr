@@ -19,9 +19,16 @@ Graphic formats used:
 
 ## Configuration variables
 
-device='plustek'			# Sane device refernece, see scanimage -L for available devices
-#device='genesys'			# Klaus Scanner
+device='plustek'
+AdditionalScanOptions=''
+
+#device='genesys'			
+#AdditionalScanOptions='--brightness 50 --mode Gray'
+
+
+Engine='tesseract'			# abbyy or tesseract
 SaveFormatScanOnly='jpg'	# Imageformat to use in scan-only mode
+
 
 # Try to catch ctrl-c in a cleaner way
 try:
@@ -155,7 +162,7 @@ def scan(resolution, width, height, progress):
 	else:
 			StringProgress = ''
 #--calibration-cache=yes
-	call('scanimage --format=tiff -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' >' +TempFile+ '.tiff', shell=True)
+	call('scanimage --format=tiff -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.tiff', shell=True)
 
 	print('Done.')
 
@@ -208,27 +215,26 @@ def ocr(save, language):
 	my_env["MALLOC_CHECK_"] = '0'
 	#my_env.get("PATH", '')
 
-	# To use cuneiform as OCR-engine
-	#p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff', '', my_env)
-	
-	# To use tesseract as OCR-engine
-	if language == 'ger':
-		language = 'deu'
+	if (Engine == 'tesseract'):
+		# To use cuneiform as OCR-engine
+		#p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff', '', my_env)
+		
+		# To use tesseract as OCR-engine
+		if language == 'ger':
+			language = 'deu'
 
-	p = execute('tesseract ' +TempFile+ '.bw.tiff ' +TempFile+ ' -l ' +language+ ' hocr', '', my_env)
-	# Rename temporary file created by tesseract (.html -> .hOCR)
-	os.rename(TempFile+'.html', TempFile+'.html'[:-4] + "hOCR")
+		p = execute('tesseract ' +TempFile+ '.bw.tiff ' +TempFile+ ' -l ' +language+ ' hocr', '', my_env)
+
+		# Create PDF || -s: Alternative word-grouping
+		call('hocr2pdf -s -i '+TempFile+'.bw.tiff -o '+save+'.pdf < ' +TempFile+ '.hocr ', shell=True)
+	
+	elif (Engine == 'abbyy'):
+		p = execute('abbyyocr11 -f PDF -if ' +TempFile+ '.bw.tiff -of ' +save+ '.pdf', '', my_env)
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
 	else:
 		print('Done.')
-
-
-	# Create PDF || -s: Alternative word-grouping
-	call('hocr2pdf -s -i '+TempFile+'.bw.tiff -o '+save+'.pdf < ' +TempFile+ '.hOCR ', shell=True)
-
-
 
 # Do some final optimizing on output PDF
 def OptimizePDF():
@@ -240,7 +246,7 @@ def OptimizePDF():
 	if p[0] != 0:
 		print ('Error! ' + p[1])
 	else:
-		print('Done.')
+		print ('Done.')
 
 
 # Remove garbage files, if existing
