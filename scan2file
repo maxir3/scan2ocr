@@ -17,18 +17,27 @@ Graphic formats used:
 
 """
 
+AdditionalScanOptions=""
+
 ## Configuration variables
 
-device='plustek'
-AdditionalScanOptions=''
+#device='plustek'
+#AdditionalScanOptions='--mode Lineart'
 
-#device='genesys'			
-#AdditionalScanOptions='--brightness 50 --mode Gray'
+device='dsseries'
+AdditionalScanOptions='--mode Gray' # Lineart, Gray or Color
 
+#device='pixma'
+
+#device='genesys'
+#AdditionalScanOptions='--brightness 30 --mode Gray'
+
+# Gray (a!) | Lineart | Color
 
 Engine='tesseract'			# abbyy or tesseract
-SaveFormatScanOnly='jpg'	# Imageformat to use in scan-only mode
-
+SaveFormatScanOnly='pdf'	# Imageformat to use in scan-only mode
+SaveFormatOCR='pdf'		# File Format for ocr'ed document
+TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or similar)
 
 # Try to catch ctrl-c in a cleaner way
 try:
@@ -162,7 +171,7 @@ def scan(resolution, width, height, progress):
 	else:
 			StringProgress = ''
 #--calibration-cache=yes
-	call('scanimage --format=tiff -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.tiff', shell=True)
+	call('scanimage --format='+TempFormat+' -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.'+TempFormat+'', shell=True)
 
 	print('Done.')
 
@@ -173,32 +182,34 @@ def scan(resolution, width, height, progress):
 		sys.exit ('Error! ' + str(p[1]))
 	else:
 		print('Done.')
-	
+
 	"""
 
-# Optimize Image to black/white, will write a new tiff file
+# Optimize Image to black/white, will write a new Temp file
 def optimizeImage(bw):
 
 	print('Optimization: \t', end='')
 
-	p = execute('/usr/bin/optimize2bw -i ' + TempFile + bw +'.tiff -o ' + TempFile + '.bw.tiff')
+	#p = execute('/usr/bin/optimize2bw -n -t 90 -h 400 -i ' + TempFile + bw +'.'+TempFormat+' -o ' + TempFile + '.bw.'+TempFormat+'')
+	p = execute('convert ' + TempFile + bw +'.'+TempFormat+' -threshold 65%  ' + TempFile + '.bw.'+TempFormat+'')
+	#p = execute('/usr/bin/unpaper --layout single --no-wipe --no-blackfilter --no-mask-center --no-mask-scan --no-border --no-border-align ' + TempFile + bw +'.'+TempFormat+' ' + TempFile + '.bw.'+TempFormat+'')
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
 	else:
 		print('Done.')
 
-# Convert tiff to SaveFormatScanOnly (used when scanning only)
+# Convert TempFormat to SaveFormatScanOnly (used when scanning only)
 def convertToImage(bw):
-	
+
 	global SaveFormatScanOnly
 
 	print('Convert: \t', end='')
 
-	p = execute('convert '+TempFile + bw + '.tiff '+SaveFile+'.'+SaveFormatScanOnly)
+	p = execute('convert '+TempFile + bw + '.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly)
 
 	if p[0] != 0:
-		sys.exit ('Error converting tiff to ' + SaveFormatScanOnly + ': ' + p[1])
+		sys.exit ('Error converting '+TempFormat+' to ' + SaveFormatScanOnly + ': ' + p[1])
 	else:
 		print('Done.')
 
@@ -207,46 +218,24 @@ def ocr(save, language):
 
 	print('OCR: \t', end='')
 
-	# MALLOC_CHECK_ prevents abort due to glibc errors
-	# Hilft noch nicht ganz!
-	#call('MALLOC_CHECK_=0 cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff '+verbosity(), shell=True)
-
 	my_env = os.environ
 	my_env["MALLOC_CHECK_"] = '0'
-	#my_env.get("PATH", '')
 
-	if (Engine == 'tesseract'):
-		# To use cuneiform as OCR-engine
-		#p = execute('cuneiform -l ' +language+ ' -f hocr -o ' +TempFile+ '.hOCR ' +TempFile+ '.bw.tiff', '', my_env)
-		
-		# To use tesseract as OCR-engine
-		if language == 'ger':
-			language = 'deu'
+	if language == 'ger':
+		language = 'deu'
 
-		p = execute('tesseract ' +TempFile+ '.bw.tiff ' +TempFile+ ' -l ' +language+ ' hocr', '', my_env)
-
-		# Create PDF || -s: Alternative word-grouping
-		call('hocr2pdf -s -i '+TempFile+'.bw.tiff -o '+save+'.pdf < ' +TempFile+ '.hocr ', shell=True)
-	
-	elif (Engine == 'abbyy'):
-		p = execute('abbyyocr11 -f PDF -if ' +TempFile+ '.bw.tiff -of ' +save+ '.pdf', '', my_env)
+	#p = execute('pdfsandwich -layout single -enforcehocr2pdf -lang '+language+' -o '+save+'.pdf '+TempFile+'.merged.pdf')
+	p = execute('pdfsandwich -nopreproc -layout none -lang '+language+' -o '+save+'.pdf '+TempFile+'.merged.pdf')
+	#p = execute('/usr/bin/ocrodjvu --language '+language+' -o '+save+'.'+SaveFormatOCR+' '+TempFile+'.merged.'+SaveFormatOCR+'')
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
 	else:
 		print('Done.')
 
-# Do some final optimizing on output PDF
-def OptimizePDF():
-
-	print('PDF Optimization: \t', end='')
-	
-	p = execute('/usr/bin/pdfopt ' + TempFile + '.pdf ' + TempFile + '.pdf')
-
-	if p[0] != 0:
-		print ('Error! ' + p[1])
-	else:
-		print ('Done.')
+# Merge all Tempfiles to one djvu file
+#def MergeDjvu():
+#	for var in *.otrkey; do nice -n 5 /usr/bin/otrtool blabla mit $var; done
 
 
 # Remove garbage files, if existing
@@ -271,12 +260,12 @@ def verbosity():
 def OutputFileExists(SaveFile):
 	args = parser.parse_args()
 
-	if ( (os.path.exists(SaveFile + '.pdf') == True and ( args.mode == 'scanocr' or args.mode == 'ocr' ) ) 
+	if ( (os.path.exists(SaveFile + '.'+SaveFormatOCR+'') == True and ( args.mode == 'scanocr' or args.mode == 'ocr' ) )
 	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and args.mode == 'scan') ):
 		return True
 	else:
 		return False
-		
+
 
 # Main program
 def main():
@@ -287,11 +276,11 @@ def main():
 	if args.mode == 'scanocr':
 		print('Scan and OCR')
 		if args.output == None:
-			args.output = str(input('Please give some output filename (without .pdf): '))
+			args.output = str(input('Please give some output filename (without .'+SaveFormatOCR+'): '))
 	elif args.mode == 'scan':
 		print('Scan only')
 		if args.output == None:
-			args.output = str(input('Please give some output filename (without .pdf): '))
+			args.output = str(input('Please give some output filename (without .'+SaveFormatOCR+'): '))
 	elif args.mode == 'ocr':
 		print('OCR only')
 		print('FEHLT NOCH')
@@ -316,17 +305,17 @@ def main():
 	# Create multi-page OCR'ed PDF
 	if  (args.multi == True):
 		Pages = PagesOrig = int(input('How many pages does your document contain? '))
-		
+
 		if (Pages < 1):
 			sys.exit('Not a valid amount of pages.')
-		
+
 		for Pages in range(1, Pages+1):
 			# Get PageNR in TempFile
 			TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(Pages)
 			print('Processing page '+str(Pages)+'...')
 			Pages -= 1
 
-			# Invoke scan, optimize and OCR
+			# Invoke scan and optimize
 			scan(args.resolution, args.width, args.height, args.progress)
 
 			if (args.color == True):
@@ -334,30 +323,29 @@ def main():
 			else:
 				optimizeImage('')
 
-			# Do OCR or convert to pdf without ocr'ing
-			if args.mode != 'scan':
-				ocr(TempFile+'_ready', args.language)
-			else:
-				if (args.color == True):
-					call('convert '+TempFile+'.tiff '+TempFile+'_ready.pdf', shell=True)
-				else:
-					call('convert '+TempFile+'.bw.tiff '+TempFile+'_ready.pdf', shell=True)
-
 			# Wait for user to continue
 			if (Pages < PagesOrig-1):
 				input('Hit enter to scan the next page (' + str(Pages+2) + ')...')
 
-		# Merge PDF's and exit
-		call('stapler cat /tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf '+SaveFile+'.pdf', shell=True)
+		# ocr or no ocr
+		if args.mode == 'scanocr':
+			# Merge to pdf
+			#call('stapler cat ' + TempFile + '*.pdf ' + TempFile + '.merged.pdf', shell=True)
+			call('convert /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
+			#MergeDjvu()
+
+			# OCR
+			ocr(SaveFile, args.language)
+		elif args.mode == 'scan': # ??????
+			if (args.color == True):
+				call('convert '+TempFile+'.'+TempFormat+' '+TempFile+'.'+SaveFormatOCR+'', shell=True)
+			else:
+				call('convert /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
 
 		# Clean up temporary files
 		CleanUp('/tmp/scanner_'+ RandomString + args.output)
 
-		# Wie wildcard ersetzen?
-		#Popen(['stapler', 'cat', '/tmp/scanner_'+ RandomString + args.output + '_*_ready.pdf', SaveFile+'.pdf'])
-
 		sys.exit(0)
-
 
 	# Normal operation if not in multipage-mode, scan first.
 	scan(args.resolution, args.width, args.height, args.progress)
@@ -366,10 +354,12 @@ def main():
 	if (args.color == False):
 		optimizeImage('')
 		blackwhite='.bw'
+		call('convert '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
+		#call('/usr/bin/cjb2 -clean '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
 	else:
 		blackwhite=''
 
-	# convert .tiff to image-format
+	# convert TempFormat to image-format
 	if (args.mode == 'scan'):
 		convertToImage(blackwhite)
 
