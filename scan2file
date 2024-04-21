@@ -1,40 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Depends on:
-sane
-tesseract
-hocr2pdf and optimize2bw (both part of exactimage)
-stapler
-python-pyparallel to use parallel processing (i.e. OCR on multiple pdf files)
-
-
-Graphic formats used:
-	tiff:	scanned raw data
-	png:	temporary files and image type converted into the final pdf document - PROBLEMS WITH CUNEIFORM AS OF 2012/06/03
-	pdf:	final output
-
-"""
-
-AdditionalScanOptions=""
-
 ## Configuration variables
-
-#device='plustek'
-#AdditionalScanOptions='--mode Lineart'
 
 device='dsseries'
 AdditionalScanOptions='--mode Gray' # Lineart, Gray or Color
 
-#device='pixma'
-
-#device='genesys'
 #AdditionalScanOptions='--brightness 30 --mode Gray'
-
 # Gray (a!) | Lineart | Color
 
-Engine='tesseract'			# abbyy or tesseract
 SaveFormatScanOnly='pdf'	# Imageformat to use in scan-only mode
 SaveFormatOCR='pdf'		# File Format for ocr'ed document
 TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or similar)
@@ -140,8 +114,6 @@ parser.add_argument('-l',
 
 
 
-
-
 # Executes given command, returns stdout/stderr
 def execute(cmd, stdin='', env=''):
 	cmd = shlex.split(cmd)
@@ -190,7 +162,6 @@ def optimizeImage(bw):
 
 	print('Optimization: \t', end='')
 
-	#p = execute('/usr/bin/optimize2bw -n -t 90 -h 400 -i ' + TempFile + bw +'.'+TempFormat+' -o ' + TempFile + '.bw.'+TempFormat+'')
 	p = execute('convert ' + TempFile + bw +'.'+TempFormat+' -threshold 65%  ' + TempFile + '.bw.'+TempFormat+'')
 	#p = execute('/usr/bin/unpaper --layout single --no-wipe --no-blackfilter --no-mask-center --no-mask-scan --no-border --no-border-align ' + TempFile + bw +'.'+TempFormat+' ' + TempFile + '.bw.'+TempFormat+'')
 
