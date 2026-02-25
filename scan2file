@@ -279,6 +279,9 @@ def main():
 	if args.output is None:
 		args.output = 'scan_' + datetime.now().strftime('%Y%m%d_%H%M%S')
 
+	# Strip any file extension the user may have added (e.g. Foo.pdf -> Foo)
+	args.output = os.path.splitext(args.output)[0]
+
 	# Mode switcher
 	print('Current Mode: ', end='')
 	if args.mode == 'scanocr':
