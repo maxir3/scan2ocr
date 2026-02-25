@@ -295,6 +295,10 @@ def main():
 	else:
 		sys.exit('No valid mode given. Please choose one of: scanocr, scan, ocr')
 
+	print('Device: %s | %sdpi | %sx%smm | %s' % (
+		device, args.resolution, args.width, args.height,
+		AdditionalScanOptions.strip()))
+
 	global TempFile, SaveFile, verbose, _temp_prefix
 
 	# Process verbose-switch ...
