@@ -233,6 +233,16 @@ def ocr(save, language):
 #	for var in *.otrkey; do nice -n 5 /usr/bin/otrtool blabla mit $var; done
 
 
+def print_output_size(filepath):
+	try:
+		size = os.path.getsize(filepath)
+		if size >= 1024 * 1024:
+			print('Output: ' + filepath + ' (%.1f MB)' % (size / 1024 / 1024))
+		else:
+			print('Output: ' + filepath + ' (%.0f KB)' % (size / 1024))
+	except OSError:
+		pass
+
 # Remove garbage files, if existing
 def CleanUp(filename = ''):
 
@@ -363,6 +373,11 @@ def main():
 		# Clean up temporary files
 		CleanUp('/tmp/scanner_'+ RandomString + args.output)
 
+		if args.mode == 'scanocr':
+			print_output_size(SaveFile + '.' + SaveFormatOCR)
+		elif args.mode == 'scan':
+			print_output_size(SaveFile + '.' + SaveFormatScanOnly)
+
 		sys.exit(0)
 
 	# Normal operation if not in multipage-mode
@@ -416,6 +431,11 @@ def main():
 		ocr(SaveFile, args.language)
 
 	CleanUp()
+
+	if args.mode == 'scanocr':
+		print_output_size(SaveFile + '.' + SaveFormatOCR)
+	elif args.mode == 'scan':
+		print_output_size(SaveFile + '.' + SaveFormatScanOnly)
 
 	# End program
 	sys.exit(0)
