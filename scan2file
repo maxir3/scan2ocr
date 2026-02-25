@@ -368,14 +368,18 @@ def main():
 		print('Scanned ' + str(page_num) + ' page(s) in total.')
 
 		# ocr or no ocr
+		page_glob = '/tmp/scanner_'+ RandomString + args.output
 		if args.mode == 'scanocr':
-			call('magick /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
+			if args.color:
+				call('magick '+page_glob+'_*.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
+			else:
+				call('magick '+page_glob+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
 			ocr(SaveFile, args.language)
 		elif args.mode == 'scan':
-			if (args.color == True):
-				call('magick '+TempFile+'.'+TempFormat+' '+TempFile+'.'+SaveFormatOCR+'', shell=True)
+			if args.color:
+				call('magick '+page_glob+'_*.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly, shell=True)
 			else:
-				call('magick /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
+				call('magick '+page_glob+'_*.bw.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly, shell=True)
 
 		# Clean up temporary files
 		CleanUp('/tmp/scanner_'+ RandomString + args.output)
