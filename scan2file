@@ -13,35 +13,28 @@ SaveFormatScanOnly='pdf'	# Imageformat to use in scan-only mode
 SaveFormatOCR='pdf'		# File Format for ocr'ed document
 TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or similar)
 
-# Try to catch ctrl-c in a cleaner way
-try:
-	import signal
-	def signal_handler(signal, frame):
-		print("\nInterrupted")
-		try:
-			sys.exit(2)
-		except NameError:
-			import sys
-			sys.exit(2)
-		signal.signal(signal.SIGINT, signal_handler)
-except KeyboardInterrupt:
-	print("\nInterrupted")
-	try:
-		sys.exit(1)
-	except NameError:
-		import sys
-		sys.exit(1)
-
 import argparse
 from subprocess import call, Popen, PIPE
-import os			# env
+import atexit
+import glob
+import os
 import random
-import string
+import shlex
 import shutil
+import string
 import sys
-import shlex		# execute() function
-#import pp
-import glob			# wildcard file remove
+
+_temp_prefix = None
+
+def _cleanup_temp_files():
+	if _temp_prefix is not None:
+		for f in glob.glob(_temp_prefix + '*'):
+			try:
+				os.remove(f)
+			except OSError:
+				pass
+
+atexit.register(_cleanup_temp_files)
 
 def find_image_viewer():
 	for viewer in ['feh', 'display', 'eog', 'xdg-open']:
@@ -289,7 +282,7 @@ def main():
 	else:
 		sys.exit('No valid mode given. Please choose one of: scanocr, scan, ocr')
 
-	global TempFile, SaveFile, verbose
+	global TempFile, SaveFile, verbose, _temp_prefix
 
 	# Process verbose-switch ...
 	verbose = args.verbose
@@ -298,6 +291,7 @@ def main():
 	RandomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6))
 	TempFile = '/tmp/scanner_'+ RandomString + args.output
 	SaveFile = os.getcwd() + '/' + args.output
+	_temp_prefix = '/tmp/scanner_' + RandomString + args.output
 
 	# check if output file exists
 	if OutputFileExists(SaveFile) == True:
