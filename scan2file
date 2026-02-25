@@ -43,6 +43,31 @@ import shlex		# execute() function
 #import pp
 import glob			# wildcard file remove
 
+def find_image_viewer():
+	for viewer in ['feh', 'display', 'eog', 'xdg-open']:
+		if shutil.which(viewer):
+			return viewer
+	return None
+
+def show_image(filepath):
+	viewer = find_image_viewer()
+	if viewer is None:
+		return None
+	if viewer == 'feh':
+		return Popen(['feh', '--auto-zoom', '--scale-down', filepath])
+	if viewer == 'display':
+		return Popen(['display', '-resize', '1200x1600>', filepath])
+	return Popen([viewer, filepath])
+
+def close_viewer(proc):
+	if proc is None:
+		return
+	proc.terminate()
+	try:
+		proc.wait(timeout=2)
+	except Exception:
+		proc.kill()
+
 parser = argparse.ArgumentParser(description='Scan and start OCR.')
 
 ## General Options ##
@@ -143,9 +168,14 @@ def scan(resolution, width, height, progress):
 	else:
 			StringProgress = ''
 #--calibration-cache=yes
-	call('scanimage --format='+TempFormat+' -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.'+TempFormat+'', shell=True)
+	ret = call('scanimage --format='+TempFormat+' -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.'+TempFormat+'', shell=True)
 
-	print('Done.')
+	if ret == 0:
+		print('Done.')
+		return True
+	else:
+		print('Fehler (Exit-Code ' + str(ret) + ').')
+		return False
 
 	"""
 	p = execute('/usr/bin/scanimage --format=tiff -d ' + device + ' --calibration-cache=yes --resolution ' + resolution + ' -x ' + width + ' -y ' + height + ' ' + StringProgress)
@@ -275,39 +305,55 @@ def main():
 
 	# Create multi-page OCR'ed PDF
 	if  (args.multi == True):
-		Pages = PagesOrig = int(input('How many pages does your document contain? '))
+		page_num = 0
+		done = False
+		while not done:
+			page_num += 1
 
-		if (Pages < 1):
-			sys.exit('Not a valid amount of pages.')
+			# Inner loop: rescan this page if needed
+			while True:
+				TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(page_num)
+				print('--- Seite ' + str(page_num) + ' ---')
 
-		for Pages in range(1, Pages+1):
-			# Get PageNR in TempFile
-			TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(Pages)
-			print('Processing page '+str(Pages)+'...')
-			Pages -= 1
+				if not scan(args.resolution, args.width, args.height, args.progress):
+					for f in glob.glob(TempFile + '*'):
+						os.remove(f)
+					answer = input('Dokument einlegen und Enter drücken zum Wiederholen (q = abbrechen): ').strip().lower()
+					if answer == 'q':
+						done = True
+						page_num -= 1
+						break
+					continue  # retry same page
 
-			# Invoke scan and optimize
-			scan(args.resolution, args.width, args.height, args.progress)
+				if args.color:
+					preview_file = TempFile + '.' + TempFormat
+				else:
+					optimizeImage('')
+					preview_file = TempFile + '.bw.' + TempFormat
 
-			if (args.color == True):
-				convertToImage('')
-			else:
-				optimizeImage('')
+				viewer_proc = show_image(preview_file)
+				answer = input('Seite ok? [Enter = weiter, n = nochmal scannen, q = fertig]: ').strip().lower()
+				close_viewer(viewer_proc)
 
-			# Wait for user to continue
-			if (Pages < PagesOrig-1):
-				input('Hit enter to scan the next page (' + str(Pages+2) + ')...')
+				if answer == 'n':
+					# Delete temp files for this page and rescan
+					for f in glob.glob(TempFile + '*'):
+						os.remove(f)
+					page_num -= 1  # will be incremented again at top of outer loop
+					break
+				elif answer == 'q':
+					done = True
+					break
+				else:
+					break  # keep page, continue to next
+
+		print('Insgesamt ' + str(page_num) + ' Seite(n) gescannt.')
 
 		# ocr or no ocr
 		if args.mode == 'scanocr':
-			# Merge to pdf
-			#call('stapler cat ' + TempFile + '*.pdf ' + TempFile + '.merged.pdf', shell=True)
 			call('convert /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
-			#MergeDjvu()
-
-			# OCR
 			ocr(SaveFile, args.language)
-		elif args.mode == 'scan': # ??????
+		elif args.mode == 'scan':
 			if (args.color == True):
 				call('convert '+TempFile+'.'+TempFormat+' '+TempFile+'.'+SaveFormatOCR+'', shell=True)
 			else:
