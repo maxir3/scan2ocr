@@ -365,17 +365,47 @@ def main():
 
 		sys.exit(0)
 
-	# Normal operation if not in multipage-mode, scan first.
-	scan(args.resolution, args.width, args.height, args.progress)
+	# Normal operation if not in multipage-mode
+	while True:
+		if not scan(args.resolution, args.width, args.height, args.progress):
+			for f in glob.glob(TempFile + '*'):
+				os.remove(f)
+			answer = input('Insert document and press Enter to retry (q = abort): ').strip().lower()
+			if answer == 'q':
+				sys.exit(1)
+			continue
 
-	# optimize
-	if (args.color == False):
-		optimizeImage('')
-		blackwhite='.bw'
+		if args.color:
+			preview_file = TempFile + '.' + TempFormat
+			blackwhite = ''
+		else:
+			optimizeImage('')
+			preview_file = TempFile + '.bw.' + TempFormat
+			blackwhite = '.bw'
+
+		viewer_proc = show_image(preview_file)
+		while True:
+			answer = input('Page ok? [Enter = continue, n = rescan, r = rotate 90°, q = abort]: ').strip().lower()
+			if answer == 'r':
+				close_viewer(viewer_proc)
+				call(['magick', 'mogrify', '-rotate', '90', preview_file])
+				viewer_proc = show_image(preview_file)
+			else:
+				break
+		close_viewer(viewer_proc)
+
+		if answer == 'n':
+			for f in glob.glob(TempFile + '*'):
+				os.remove(f)
+			continue
+		elif answer == 'q':
+			sys.exit(1)
+		else:
+			break
+
+	# merge to pdf (after preview so rotations are included)
+	if not args.color:
 		call('magick '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
-		#call('/usr/bin/cjb2 -clean '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
-	else:
-		blackwhite=''
 
 	# convert TempFormat to image-format
 	if (args.mode == 'scan'):
