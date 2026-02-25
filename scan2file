@@ -192,7 +192,7 @@ def optimizeImage(bw):
 
 	print('Optimization: \t', end='')
 
-	p = execute('convert ' + TempFile + bw +'.'+TempFormat+' -threshold 65%  ' + TempFile + '.bw.'+TempFormat+'')
+	p = execute('magick ' +TempFile + bw +'.'+TempFormat+' -threshold 65%  ' + TempFile + '.bw.'+TempFormat+'')
 	#p = execute('/usr/bin/unpaper --layout single --no-wipe --no-blackfilter --no-mask-center --no-mask-scan --no-border --no-border-align ' + TempFile + bw +'.'+TempFormat+' ' + TempFile + '.bw.'+TempFormat+'')
 
 	if p[0] != 0:
@@ -207,7 +207,7 @@ def convertToImage(bw):
 
 	print('Convert: \t', end='')
 
-	p = execute('convert '+TempFile + bw + '.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly)
+	p = execute('magick ' +TempFile + bw + '.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly)
 
 	if p[0] != 0:
 		sys.exit ('Error converting '+TempFormat+' to ' + SaveFormatScanOnly + ': ' + p[1])
@@ -351,13 +351,13 @@ def main():
 
 		# ocr or no ocr
 		if args.mode == 'scanocr':
-			call('convert /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
+			call('magick /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
 			ocr(SaveFile, args.language)
 		elif args.mode == 'scan':
 			if (args.color == True):
-				call('convert '+TempFile+'.'+TempFormat+' '+TempFile+'.'+SaveFormatOCR+'', shell=True)
+				call('magick '+TempFile+'.'+TempFormat+' '+TempFile+'.'+SaveFormatOCR+'', shell=True)
 			else:
-				call('convert /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
+				call('magick /tmp/scanner_'+ RandomString + args.output+'_*.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
 
 		# Clean up temporary files
 		CleanUp('/tmp/scanner_'+ RandomString + args.output)
@@ -371,7 +371,7 @@ def main():
 	if (args.color == False):
 		optimizeImage('')
 		blackwhite='.bw'
-		call('convert '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
+		call('magick '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
 		#call('/usr/bin/cjb2 -clean '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
 	else:
 		blackwhite=''
