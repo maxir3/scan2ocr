@@ -6,14 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A CLI toolset for scanning documents, converting them to black-and-white PDFs, and running OCR to produce searchable PDFs. There are two main scripts:
 
-- **`scan2file`** — Python 3 script. Drives a physical scanner via SANE (`scanimage`), optimizes images (via ImageMagick `convert`), and OCRs via `pdfsandwich` (which wraps tesseract). Supports single-page and multi-page mode.
+- **`scan2file`** — Python 3 script. Drives a physical scanner via SANE (`scanimage`), optimizes images (via ImageMagick `magick`), and OCRs via `pdfsandwich` (which wraps tesseract). Supports single-page and multi-page mode.
 - **`ocrscript`** — Bash script. Takes existing image/PDF files, converts them to a B/W PDF via `merge2pdfbw`, then OCRs via `pdfsandwich`. Moves originals to an `erledigt/` subdirectory on success.
 - **`ocrscript-convert`** — Older/simpler bash script that converts a directory of images to PDF and runs `pdfsandwich`. Largely superseded by `ocrscript`.
 
 ## External dependencies
 
 - `sane` / `scanimage` — scanner access (scan2file only)
-- `imagemagick` / `convert` — image format conversion and B/W threshold optimization
+- `imagemagick` / `magick` — image format conversion, B/W threshold optimization, and rotation (`mogrify`); requires IMv7
+- `feh`, `display`, `eog`, or `xdg-open` — image preview during multi-page scan (first found is used)
 - `pdfsandwich` — OCR orchestrator (wraps tesseract); used by all scripts
 - `merge2pdfbw` — merges images/PDFs into a single B/W PDF (ocrscript only); may live at `~/.bin/merge2pdfbw`
 - `tesseract` — OCR engine (invoked by pdfsandwich)
@@ -49,12 +50,22 @@ SaveFormatOCR = 'pdf'
 
 `ocrscript` tool paths can be overridden via env vars: `MERGE2PDFBW=/path/to/merge2pdfbw PDFSANDWICH=/path/to/pdfsandwich ./ocrscript ...`
 
+## Multi-page flow (scan2file -mu)
+
+After each page is scanned and optimized, the image is shown in a viewer and the user is prompted:
+- **Enter** — keep page, scan next
+- **r** — rotate 90° clockwise in-place (`magick mogrify`), reopen viewer; repeat as needed
+- **n** — discard page, rescan
+- **q** — done, proceed to merge and OCR
+
+On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. Temp files are removed on exit via `atexit` regardless of how the script terminates.
+
 ## Pipeline overview
 
 **scan2file (scanocr mode):**
 1. `scanimage` → `TempFile.pnm`
-2. ImageMagick `convert` with `-threshold 65%` → `TempFile.bw.pnm`
-3. `convert *.bw.pnm` → `TempFile.merged.pdf`
+2. `magick` with `-threshold 65%` → `TempFile.bw.pnm`
+3. `magick *.bw.pnm` → `TempFile.merged.pdf`
 4. `pdfsandwich -nopreproc -layout none -lang deu` → `Output.pdf`
 
 **ocrscript:**
