@@ -326,7 +326,14 @@ def main():
 					preview_file = TempFile + '.bw.' + TempFormat
 
 				viewer_proc = show_image(preview_file)
-				answer = input('Page ok? [Enter = next page, n = rescan, q = done]: ').strip().lower()
+				while True:
+					answer = input('Page ok? [Enter = next page, n = rescan, r = rotate 90°, q = done]: ').strip().lower()
+					if answer == 'r':
+						close_viewer(viewer_proc)
+						call(['magick', 'mogrify', '-rotate', '90', preview_file])
+						viewer_proc = show_image(preview_file)
+					else:
+						break
 				close_viewer(viewer_proc)
 
 				if answer == 'n':
