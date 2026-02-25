@@ -174,7 +174,7 @@ def scan(resolution, width, height, progress):
 		print('Done.')
 		return True
 	else:
-		print('Fehler (Exit-Code ' + str(ret) + ').')
+		print('Error (exit code ' + str(ret) + ').')
 		return False
 
 	"""
@@ -284,7 +284,7 @@ def main():
 			args.output = str(input('Please give some output filename (without .'+SaveFormatOCR+'): '))
 	elif args.mode == 'ocr':
 		print('OCR only')
-		print('FEHLT NOCH')
+		print('Not yet implemented.')
 		sys.exit(0) # For now
 	else:
 		sys.exit('No valid mode given. Please choose one of: scanocr, scan, ocr')
@@ -313,12 +313,12 @@ def main():
 			# Inner loop: rescan this page if needed
 			while True:
 				TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(page_num)
-				print('--- Seite ' + str(page_num) + ' ---')
+				print('--- Page ' + str(page_num) + ' ---')
 
 				if not scan(args.resolution, args.width, args.height, args.progress):
 					for f in glob.glob(TempFile + '*'):
 						os.remove(f)
-					answer = input('Dokument einlegen und Enter drücken zum Wiederholen (q = abbrechen): ').strip().lower()
+					answer = input('Insert document and press Enter to retry (q = abort): ').strip().lower()
 					if answer == 'q':
 						done = True
 						page_num -= 1
@@ -332,7 +332,7 @@ def main():
 					preview_file = TempFile + '.bw.' + TempFormat
 
 				viewer_proc = show_image(preview_file)
-				answer = input('Seite ok? [Enter = weiter, n = nochmal scannen, q = fertig]: ').strip().lower()
+				answer = input('Page ok? [Enter = next page, n = rescan, q = done]: ').strip().lower()
 				close_viewer(viewer_proc)
 
 				if answer == 'n':
@@ -347,7 +347,7 @@ def main():
 				else:
 					break  # keep page, continue to next
 
-		print('Insgesamt ' + str(page_num) + ' Seite(n) gescannt.')
+		print('Scanned ' + str(page_num) + ' page(s) in total.')
 
 		# ocr or no ocr
 		if args.mode == 'scanocr':
