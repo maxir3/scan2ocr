@@ -16,6 +16,7 @@ TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or sim
 import argparse
 from subprocess import call, Popen, PIPE
 import atexit
+from datetime import datetime
 import glob
 import os
 import random
@@ -68,8 +69,8 @@ parser = argparse.ArgumentParser(description='Scan and start OCR.')
 parser.add_argument('-o',
 					'--output',
 					dest='output',
-					help='Output filename',
-					required=True)
+					default=None,
+					help='Output filename (default: scan_YYYYMMDD_HHMMSS)')
 parser.add_argument('-m',
 					'--mode',
 					dest='mode',
@@ -265,16 +266,15 @@ def OutputFileExists(SaveFile):
 def main():
 	args = parser.parse_args()
 
-	# Mode switcher - ask for output name if not given
+	if args.output is None:
+		args.output = 'scan_' + datetime.now().strftime('%Y%m%d_%H%M%S')
+
+	# Mode switcher
 	print('Current Mode: ', end='')
 	if args.mode == 'scanocr':
 		print('Scan and OCR')
-		if args.output == None:
-			args.output = str(input('Please give some output filename (without .'+SaveFormatOCR+'): '))
 	elif args.mode == 'scan':
 		print('Scan only')
-		if args.output == None:
-			args.output = str(input('Please give some output filename (without .'+SaveFormatOCR+'): '))
 	elif args.mode == 'ocr':
 		print('OCR only')
 		print('Not yet implemented.')
