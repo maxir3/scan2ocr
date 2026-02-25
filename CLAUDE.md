@@ -8,13 +8,12 @@ A CLI toolset for scanning documents, converting them to black-and-white PDFs, a
 
 - **`scan2file`** — Python 3 script. Drives a physical scanner via SANE (`scanimage`), optimizes images (via ImageMagick `magick`), and OCRs via `pdfsandwich` (which wraps tesseract). Supports single-page and multi-page mode.
 - **`ocrscript`** — Bash script. Takes existing image/PDF files, converts them to a B/W PDF via `merge2pdfbw`, then OCRs via `pdfsandwich`. Moves originals to an `erledigt/` subdirectory on success.
-- **`ocrscript-convert`** — Older/simpler bash script that converts a directory of images to PDF and runs `pdfsandwich`. Largely superseded by `ocrscript`.
 
 ## External dependencies
 
 - `sane` / `scanimage` — scanner access (scan2file only)
 - `imagemagick` / `magick` — image format conversion, B/W threshold optimization, and rotation (`mogrify`); requires IMv7
-- `feh`, `display`, `eog`, or `xdg-open` — image preview during multi-page scan (first found is used)
+- `feh`, `display`, `eog`, or `xdg-open` — image preview during scanning (first found is used)
 - `pdfsandwich` — OCR orchestrator (wraps tesseract); used by all scripts
 - `merge2pdfbw` — merges images/PDFs into a single B/W PDF (ocrscript only); may live at `~/.bin/merge2pdfbw`
 - `tesseract` — OCR engine (invoked by pdfsandwich)
@@ -35,14 +34,16 @@ SaveFormatOCR = 'pdf'
 ## Usage
 
 ```bash
-# Single page scan + OCR (German, default)
+# Single page scan + OCR (German, default; -o optional, defaults to timestamp)
+./scan2file
 ./scan2file -o OutputName
 
 # Multi-page scan + OCR
+./scan2file -mu
 ./scan2file -o OutputName -mu
 
 # Scan only (no OCR)
-./scan2file -o OutputName -m scan
+./scan2file -m scan
 
 # OCR existing image/PDF files
 ./ocrscript file1.pdf file2.jpg ...
@@ -50,15 +51,15 @@ SaveFormatOCR = 'pdf'
 
 `ocrscript` tool paths can be overridden via env vars: `MERGE2PDFBW=/path/to/merge2pdfbw PDFSANDWICH=/path/to/pdfsandwich ./ocrscript ...`
 
-## Multi-page flow (scan2file -mu)
+## Interactive scan flow
 
 After each page is scanned and optimized, the image is shown in a viewer and the user is prompted:
-- **Enter** — keep page, scan next
+- **Enter** — keep page (in multi-page mode: scan next page)
 - **r** — rotate 90° clockwise in-place (`magick mogrify`), reopen viewer; repeat as needed
 - **n** — discard page, rescan
-- **q** — done, proceed to merge and OCR
+- **q** — abort (single-page) or finish and proceed to OCR (multi-page)
 
-On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. Temp files are removed on exit via `atexit` regardless of how the script terminates.
+On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. Temp files are removed on exit via `atexit` regardless of how the script terminates. Output filename and size are printed on completion.
 
 ## Pipeline overview
 
@@ -83,4 +84,4 @@ On scanner error (e.g. feeder empty), temp files are cleaned up and the user is 
 - OCR-only mode (`-m ocr`) in scan2file is not implemented
 - ADF (automatic document feeder) multi-page not supported
 - Color preservation in multi-page scan mode has partial/broken logic
-- `ocrscript-convert` is an older script, kept for reference
+- `ocrscript` language is hardcoded to `deu`, no CLI parameter yet
