@@ -1,77 +1,65 @@
 # About
 
-This is a small cli-only python program to scan mainly documents with one or many pages, optimize them (black/white), put them together in a pdf and do an optical character recognition (OCR). The result is a as-small-as-possible pdf file which is full-text searchable and ready to be put in a digital archive.
+CLI toolset for scanning documents, converting them to black-and-white PDFs, and running OCR to produce searchable PDFs.
+
+**`scan2file`** — Python 3 script. Drives a physical scanner via SANE, optimizes images via ImageMagick, and OCRs via pdfsandwich (tesseract). Supports single-page and multi-page mode with interactive preview.
 
 # Dependencies
 
-You will need the following additional software:
+- `python3`
+- `sane` / `scanimage` — scanner access
+- `imagemagick` (IMv7, `magick`) — image conversion, B/W optimization, rotation
+- `pdfsandwich` — OCR orchestrator (wraps tesseract)
+- `tesseract` — OCR engine
+- `feh`, `display`, `eog`, or `xdg-open` — image preview during scanning (first found is used)
 
-* python3
-* sane (scanning)
-* tesseract (ocr)
-* stapler (pdf manipulation tool)
-* python-pyparallel (parallel processing)
-* imagemagick (optimization black/white)
+# Configuration
 
-# Configuration Options
+At the top of `scan2file`, edit these variables:
 
-## device
-
-execute *scanimage -L* (sane package) in a shell. Sample output:
- 
-	device `v4l:/dev/video2' is a Noname Integrated Camera: Integrated I virtual device
-	device `v4l:/dev/video0' is a Noname Integrated Camera: Integrated C virtual device
-	device `dsseries:usb:0x04F9:0x60E0' is a BROTHER DS-620 sheetfed scanner
-
-The third one is my main scanner (dsseries ... BROTHER ...). In my case I would use **dsseries** as device.
-
-## AdditionalScanOptions
-
-You can use everything sane (scanimage) supports. Default is:
-
-	--mode Gray #Gray (a!) | Lineart | Color
-
-change this to *Color* if you want to scan something which is not black/white only. *Lineart* is another option intended for black/white documents, but *Gray* works better for me.
-
-## SaveFormatScanOnly and SaveFormatOCR
-
-**pdf** should be fine for most cases.
-
-## TempFormat
-
-**pnm** should be fine for most cases.
+```python
+device = 'dsseries'           # SANE device name; run `scanimage -L` to find yours
+AdditionalScanOptions = '--mode Gray'  # Gray | Lineart | Color
+TempFormat = 'pnm'            # intermediate image format
+SaveFormatScanOnly = 'pdf'
+SaveFormatOCR = 'pdf'
+```
 
 # Usage
 
-Just download, make executable, set the basic configuration options (*device*) and execute in a shell.
+## scan2file
 
-## Options:
+```bash
+# Single page scan + OCR (output defaults to timestamped filename)
+./scan2file
+./scan2file -o OutputName
 
-*to be contined*
+# Multi-page scan + OCR
+./scan2file -mu
+./scan2file -o OutputName -mu
 
-## Examples
+# Scan only, no OCR
+./scan2file -m scan
 
-### Single A4 page
+# Options
+-r 300        resolution in dpi (default: 300)
+-l ger        OCR language (default: ger → deu/German)
+-c            preserve colors (skip B/W optimization)
+-p            show scan progress
+```
 
-	./scan2file -o Output
+## Interactive scan flow
 
-Will scan a single page, optimize it to black/white, ocr and safe as Output.pdf in the current directory.
+After each page is scanned, the image is shown in a viewer:
 
-### Multiple Pages
+- **Enter** — keep page (multi-page: scan next)
+- **r** — rotate 90° clockwise, reopen viewer; repeat as needed
+- **n** — discard and rescan
+- **q** — abort (single-page) or finish and OCR (multi-page)
 
-	./scan2file -o Output -mu
+On scanner error (e.g. feeder empty), the user is prompted to insert a document and retry.
 
-Will first ask for the number of pages, then scan everything and after that optimize and ocr the whole multi-page pdf
+# Known limitations
 
-# File formats used
-
-* tiff:	scanned raw data
-* pnm:	temporary files and image type converted into the final pdf document
-* djvu: disabled for the moment
-
-# Known Problems / Todo
-
-* automate Gray/Color scan option depending on the --color argument
-* multiple pages using ADF (feeder) scanner
-* tackle down some problems, left-over temp files, etc
-* make sure PDF/A format is used everywhere
+- OCR-only mode (`-m ocr`) not yet implemented
+- ADF (automatic document feeder) multi-page not supported
