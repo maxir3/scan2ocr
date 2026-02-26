@@ -213,7 +213,7 @@ def ocr(save, language):
 
 	print('OCR: \t', end='')
 
-	my_env = os.environ
+	my_env = os.environ.copy()
 	my_env["MALLOC_CHECK_"] = '0'
 
 	if language == 'ger':
