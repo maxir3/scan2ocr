@@ -430,7 +430,9 @@ def main():
 			break
 
 	# merge to pdf (after preview so rotations are included)
-	if not args.color:
+	if args.color:
+		call('magick '+TempFile+'.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
+	else:
 		call('magick '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
 
 	# convert TempFormat to image-format
