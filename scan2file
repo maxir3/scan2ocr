@@ -153,19 +153,17 @@ def execute(cmd, stdin='', env=''):
 # Executes scanimage (sane)
 def scan(resolution, width, height, progress):
 
-	print('Scan: \t\t', end='')
-
-	progress = False
-
-	if (progress == True):
-			StringProgress = ' -p'
+	if progress:
+		StringProgress = ' -p'
 	else:
-			StringProgress = ''
+		StringProgress = ''
+
+	print('Scanning...')
 #--calibration-cache=yes
 	ret = call('scanimage --format='+TempFormat+' -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.'+TempFormat+'', shell=True)
 
 	if ret == 0:
-		print('Done.')
+		print('Scan done.')
 		return True
 	else:
 		print('Error (exit code ' + str(ret) + ').')
