@@ -260,11 +260,9 @@ def verbosity():
 
 
 # Returns True in case the output file already exists.
-def OutputFileExists(SaveFile):
-	args = parser.parse_args()
-
-	if ( (os.path.exists(SaveFile + '.'+SaveFormatOCR+'') == True and ( args.mode == 'scanocr' or args.mode == 'ocr' ) )
-	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and args.mode == 'scan') ):
+def OutputFileExists(SaveFile, mode):
+	if ( (os.path.exists(SaveFile + '.'+SaveFormatOCR+'') == True and ( mode == 'scanocr' or mode == 'ocr' ) )
+	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and mode == 'scan') ):
 		return True
 	else:
 		return False
@@ -309,7 +307,7 @@ def main():
 	_temp_prefix = '/tmp/scanner_' + RandomString + args.output
 
 	# check if output file exists
-	if OutputFileExists(SaveFile) == True:
+	if OutputFileExists(SaveFile, args.mode) == True:
 		sys.exit('Output file exists.')
 
 	# Create multi-page OCR'ed PDF
