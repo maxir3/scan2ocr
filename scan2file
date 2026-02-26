@@ -143,12 +143,11 @@ def execute(cmd, stdin='', env=''):
 		p = Popen(cmd, stdout=PIPE, stdin=PIPE, stderr=PIPE, env=env)
 
 	stdout, stderr = p.communicate(stdin)
-	returncode = p.wait()
 
-	if returncode == 0:
+	if p.returncode == 0:
 		return (0, stdout)
 	else:
-		return (returncode, str(stderr))
+		return (p.returncode, stderr.decode('utf-8', errors='replace'))
 
 # Executes scanimage (sane)
 def scan(resolution, width, height, progress):
@@ -247,16 +246,9 @@ def CleanUp(filename = ''):
 	if (filename == ''):
 		filename = TempFile
 
-	for filename in glob.glob(filename + '*.*') :
-		os.remove(filename)
+	for f in glob.glob(filename + '*.*'):
+		os.remove(f)
 
-
-# Set Verbosity string
-def verbosity():
-	if (verbose == False):
-		return '>/dev/null 2>&1'
-	else:
-		return ''
 
 
 # Returns True in case the output file already exists.
