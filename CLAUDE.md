@@ -17,7 +17,9 @@ A CLI toolset for scanning documents, converting them to black-and-white PDFs, a
 - `pdfsandwich` — OCR orchestrator (wraps tesseract); used by all scripts
 - `merge2pdfbw` — merges images/PDFs into a single B/W PDF (ocrscript only); may live at `~/.bin/merge2pdfbw`
 - `tesseract` — OCR engine (invoked by pdfsandwich)
-- `stapler` — PDF manipulation (referenced in scan2file but currently unused/commented out)
+- `python-prompt_toolkit` — live autocomplete in filename prompt (optional; falls back to readline)
+- `poppler` / `pdftotext` — text extraction for LLM filename suggestion (optional, `--llm` only)
+- `ollama` — local LLM for filename suggestion (optional, `--llm` only); default model: `mistral`
 
 ## Configuration (scan2file)
 
@@ -29,13 +31,16 @@ AdditionalScanOptions = '--mode Gray'  # Gray | Lineart | Color
 TempFormat = 'pnm'           # intermediate image format
 SaveFormatScanOnly = 'pdf'
 SaveFormatOCR = 'pdf'
+OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
 ```
 
 ## Usage
 
 ```bash
-# Single page scan + OCR (German, default; -o optional, defaults to timestamp)
+# Single page scan + OCR — filename prompted interactively before scanning
 ./scan2file
+
+# With explicit output name (skips filename prompt)
 ./scan2file -o OutputName
 
 # Multi-page scan + OCR
@@ -45,13 +50,13 @@ SaveFormatOCR = 'pdf'
 # Scan only (no OCR)
 ./scan2file -m scan
 
-# OCR existing image/PDF files
-./ocrscript file1.pdf file2.jpg ...
+# With LLM filename suggestion after OCR (requires ollama)
+./scan2file --llm
 ```
 
-`ocrscript` tool paths can be overridden via env vars: `MERGE2PDFBW=/path/to/merge2pdfbw PDFSANDWICH=/path/to/pdfsandwich ./ocrscript ...`
-
 ## Interactive scan flow
+
+When no `-o` is given, an interactive filename prompt appears before scanning. It offers live autocomplete (substring match) from existing PDFs in the current directory and live validation (existing filenames are rejected). Requires `python-prompt_toolkit`; falls back to readline otherwise.
 
 After each page is scanned and optimized, the image is shown in a viewer and the user is prompted:
 - **Enter** — keep page (in multi-page mode: scan next page)
@@ -83,5 +88,3 @@ On scanner error (e.g. feeder empty), temp files are cleaned up and the user is 
 
 - OCR-only mode (`-m ocr`) in scan2file is not implemented
 - ADF (automatic document feeder) multi-page not supported
-- Color preservation in multi-page scan mode has partial/broken logic
-- `ocrscript` language is hardcoded to `deu`, no CLI parameter yet
