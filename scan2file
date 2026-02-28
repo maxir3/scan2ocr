@@ -12,18 +12,23 @@ AdditionalScanOptions='--mode Gray' # Lineart, Gray or Color
 SaveFormatScanOnly='pdf'	# Imageformat to use in scan-only mode
 SaveFormatOCR='pdf'		# File Format for ocr'ed document
 TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or similar)
+OllamaModel='mistral'	# Local ollama model for filename suggestions; set to '' to disable
 
 import argparse
 from subprocess import call, Popen, PIPE
 import atexit
 from datetime import datetime
 import glob
+import json
 import os
 import random
+import readline
+import re
 import shlex
 import shutil
 import string
 import sys
+import urllib.request
 
 _temp_prefix = None
 
@@ -36,6 +41,133 @@ def _cleanup_temp_files():
 				pass
 
 atexit.register(_cleanup_temp_files)
+
+def extract_pdf_text(pdf_path):
+	try:
+		p = Popen(['pdftotext', pdf_path, '-'], stdout=PIPE, stderr=PIPE)
+		stdout, _ = p.communicate()
+		if p.returncode == 0:
+			return stdout.decode('utf-8', errors='replace')
+	except Exception:
+		pass
+	return ''
+
+def suggest_filename(pdf_path):
+	if not OllamaModel:
+		return None
+	text = extract_pdf_text(pdf_path).strip()
+	if not text:
+		print('(pdftotext returned no text — is poppler installed?)')
+		return None
+	prompt = (
+		'Output format: exactly 6-10 lowercase words separated by underscores. '
+		'No sentences, no explanation, no punctuation. Only the words.\n'
+		'Example output: telekom_rechnung_januar_2026_mobilfunk_vertrag\n\n'
+		'Rules:\n'
+		'- First word: name of the organization or company the document is from\n'
+		'- If it is a letter: use the subject line (Betreff/Re/Betrifft) for the remaining words\n'
+		'- Use specific terms (names, amounts, topics), not generic words like "brief" or "dokument"\n'
+		'- Use the language of the document\n\n'
+		'Document text:\n'
+		+ text[:1000] + '\n\n'
+		'Output (6-10 words, underscores only):'
+	)
+	payload = json.dumps({'model': OllamaModel, 'prompt': prompt, 'stream': False}).encode()
+	try:
+		req = urllib.request.Request(
+			'http://localhost:11434/api/generate',
+			data=payload,
+			headers={'Content-Type': 'application/json'}
+		)
+		with urllib.request.urlopen(req, timeout=120) as resp:
+			raw = json.loads(resp.read()).get('response', '').strip()
+			keywords = re.sub(r'[^a-z0-9äöüß]', '_', raw.lower())
+			keywords = re.sub(r'_+', '_', keywords).strip('_')
+			return keywords if keywords else None
+	except Exception as e:
+		print('(ollama not reachable: ' + str(e) + ')')
+		return None
+
+try:
+	from prompt_toolkit import prompt as pt_prompt
+	from prompt_toolkit.completion import Completer, Completion
+	from prompt_toolkit.validation import Validator, ValidationError as PTValidationError
+
+	class _FileNameCompleter(Completer):
+		def get_completions(self, document, complete_event):
+			text = document.text.lower()
+			if not text:
+				return
+			for f in sorted(os.listdir(os.getcwd())):
+				if not f.lower().endswith('.pdf'):
+					continue
+				name = f[:-4]
+				if text in name.lower() and name.lower() != text:
+					yield Completion(name, start_position=-len(document.text))
+
+	class _FileExistsValidator(Validator):
+		def validate(self, document):
+			text = document.text.strip()
+			if not text:
+				return
+			if os.path.exists(os.path.join(os.getcwd(), text + '.pdf')):
+				raise PTValidationError(
+					message='"' + text + '.pdf" already exists — modify the name',
+					cursor_position=len(text)
+				)
+
+	_has_prompt_toolkit = True
+except ImportError:
+	_has_prompt_toolkit = False
+
+
+def prompt_filename():
+	"""Interactive filename prompt before scanning. Returns chosen name (no extension)."""
+	prefill = datetime.now().strftime('%Y-%m-%d') + '_'
+	try:
+		if _has_prompt_toolkit:
+			name = pt_prompt(
+				'Output filename (without .pdf): ',
+				completer=_FileNameCompleter(),
+				validator=_FileExistsValidator(),
+				validate_while_typing=True,
+				default=prefill,
+			).strip()
+		else:
+			readline.set_startup_hook(lambda: readline.insert_text(prefill))
+			try:
+				name = input('Output filename (without .pdf): ').strip()
+			finally:
+				readline.set_startup_hook()
+	except KeyboardInterrupt:
+		sys.exit(1)
+	return name if name else prefill.rstrip('_')
+
+
+def llm_rename(current_path):
+	"""Post-OCR: ask LLM for a suggestion, then offer a rename prompt."""
+	print('Asking LLM for filename suggestion...')
+	suggestion = suggest_filename(current_path)
+	date_prefix = datetime.now().strftime('%Y-%m-%d')
+	prefill = (date_prefix + '_' + suggestion) if suggestion else date_prefix + '_'
+	if suggestion:
+		print('LLM suggestion: ' + prefill)
+	readline.set_startup_hook(lambda: readline.insert_text(prefill))
+	try:
+		new_name = input('Rename (without .pdf, Enter to confirm, Ctrl-C to keep): ').strip()
+	except KeyboardInterrupt:
+		print('\nKeeping current filename.')
+		return current_path
+	finally:
+		readline.set_startup_hook()
+	if not new_name:
+		return current_path
+	new_path = os.path.join(os.path.dirname(current_path), new_name + '.pdf')
+	if not os.path.exists(new_path):
+		os.rename(current_path, new_path)
+		return new_path
+	print('File already exists, keeping current name.')
+	return current_path
 
 def find_image_viewer():
 	for viewer in ['feh', 'display', 'eog', 'xdg-open']:
@@ -125,6 +257,11 @@ parser.add_argument('-mu',
 					action='store_true',
 					default=False,
 					help='Create a multi-page PDF from more than one scan (default: no)')
+parser.add_argument('--llm',
+					dest='llm',
+					action='store_true',
+					default=False,
+					help='Use local LLM (ollama) to suggest output filename')
 parser.add_argument('-l',
 					'--language',
 					dest='language',
@@ -264,11 +401,11 @@ def OutputFileExists(SaveFile, mode):
 def main():
 	args = parser.parse_args()
 
-	if args.output is None:
-		args.output = 'scan_' + datetime.now().strftime('%Y%m%d_%H%M%S')
+	output_given = args.output is not None
 
 	# Strip any file extension the user may have added (e.g. Foo.pdf -> Foo)
-	args.output = os.path.splitext(args.output)[0]
+	if output_given:
+		args.output = os.path.splitext(args.output)[0]
 
 	# Mode switcher
 	print('Current Mode: ', end='')
@@ -286,6 +423,9 @@ def main():
 	print('Device: %s | %sdpi | %sx%smm | %s' % (
 		device, args.resolution, args.width, args.height,
 		AdditionalScanOptions.strip()))
+
+	if not output_given:
+		args.output = os.path.splitext(prompt_filename())[0]
 
 	global TempFile, SaveFile, verbose, _temp_prefix
 
@@ -373,7 +513,9 @@ def main():
 		CleanUp('/tmp/scanner_'+ RandomString + args.output)
 
 		if args.mode == 'scanocr':
-			print_output_size(SaveFile + '.' + SaveFormatOCR)
+			out = SaveFile + '.' + SaveFormatOCR
+			final = llm_rename(out) if args.llm else out
+			print_output_size(final)
 		elif args.mode == 'scan':
 			print_output_size(SaveFile + '.' + SaveFormatScanOnly)
 
@@ -434,7 +576,9 @@ def main():
 	CleanUp()
 
 	if args.mode == 'scanocr':
-		print_output_size(SaveFile + '.' + SaveFormatOCR)
+		out = SaveFile + '.' + SaveFormatOCR
+		final = llm_rename(out) if args.llm else out
+		print_output_size(final)
 	elif args.mode == 'scan':
 		print_output_size(SaveFile + '.' + SaveFormatScanOnly)
 
