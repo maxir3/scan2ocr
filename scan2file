@@ -7,7 +7,7 @@ device='dsseries'
 AdditionalScanOptions='--mode Gray' # Gray | Lineart | Color
 SaveFormatScanOnly='pdf'	# Imageformat to use in scan-only mode
 SaveFormatOCR='pdf'		# File Format for ocr'ed document
-TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or similar)
+TempFormat='pnm'			# Image format used for intermediate processing
 OllamaModel='mistral'	# Local ollama model for filename suggestions; set to '' to disable
 
 import argparse
@@ -252,10 +252,10 @@ parser.add_argument('-l',
 					help='Language to use for OCR (default: german)')
 
 # Executes given command, returns stdout/stderr
-def execute(cmd, stdin='', env=''):
+def execute(cmd, stdin='', env=None):
 	cmd = shlex.split(cmd)
 
-	if env == '':
+	if env is None:
 		p = Popen(cmd, stdout=PIPE, stdin=PIPE, stderr=PIPE)
 	else:
 		p = Popen(cmd, stdout=PIPE, stdin=PIPE, stderr=PIPE, env=env)
@@ -276,7 +276,6 @@ def scan(resolution, width, height, progress):
 		StringProgress = ''
 
 	print('Scanning...')
-#--calibration-cache=yes
 	ret = call('scanimage --format='+TempFormat+' -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.'+TempFormat+'', shell=True)
 
 	if ret == 0:
@@ -351,11 +350,10 @@ def CleanUp(filename = ''):
 
 # Returns True in case the output file already exists.
 def OutputFileExists(SaveFile, mode):
-	if ( (os.path.exists(SaveFile + '.'+SaveFormatOCR+'') == True and ( mode == 'scanocr' or mode == 'ocr' ) )
-	or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) == True and mode == 'scan') ):
-		return True
-	else:
-		return False
+	return (
+		(os.path.exists(SaveFile + '.' + SaveFormatOCR) and mode in ('scanocr', 'ocr'))
+		or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) and mode == 'scan')
+	)
 
 
 # Main program
@@ -397,11 +395,11 @@ def main():
 	_temp_prefix = '/tmp/scanner_' + RandomString + args.output
 
 	# check if output file exists
-	if OutputFileExists(SaveFile, args.mode) == True:
+	if OutputFileExists(SaveFile, args.mode):
 		sys.exit('Output file exists.')
 
 	# Create multi-page OCR'ed PDF
-	if  (args.multi == True):
+	if args.multi:
 		page_num = 0
 		done = False
 		while not done:
