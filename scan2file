@@ -4,11 +4,7 @@
 ## Configuration variables
 
 device='dsseries'
-AdditionalScanOptions='--mode Gray' # Lineart, Gray or Color
-
-#AdditionalScanOptions='--brightness 30 --mode Gray'
-# Gray (a!) | Lineart | Color
-
+AdditionalScanOptions='--mode Gray' # Gray | Lineart | Color
 SaveFormatScanOnly='pdf'	# Imageformat to use in scan-only mode
 SaveFormatOCR='pdf'		# File Format for ocr'ed document
 TempFormat='pnm'			# Image format used for processing. Unpaper needs pnm (or similar)
@@ -203,13 +199,6 @@ parser.add_argument('-m',
 					default='scanocr',
 					help='Mode to use. Values are: scanocr, scan, ocr (default: scanocr)',
 					required=False)
-parser.add_argument('-v',
-					'--verbose',
-					dest='verbose',
-					action='store_true',
-					default=False,
-					help='Be verbose.')
-
 ## Scanner Options ##
 
 parser.add_argument('-r',
@@ -262,8 +251,6 @@ parser.add_argument('-l',
 					default='ger',
 					help='Language to use for OCR (default: german)')
 
-
-
 # Executes given command, returns stdout/stderr
 def execute(cmd, stdin='', env=''):
 	cmd = shlex.split(cmd)
@@ -299,23 +286,12 @@ def scan(resolution, width, height, progress):
 		print('Error (exit code ' + str(ret) + ').')
 		return False
 
-	"""
-	p = execute('/usr/bin/scanimage --format=tiff -d ' + device + ' --calibration-cache=yes --resolution ' + resolution + ' -x ' + width + ' -y ' + height + ' ' + StringProgress)
-
-	if p[0] != 0:
-		sys.exit ('Error! ' + str(p[1]))
-	else:
-		print('Done.')
-
-	"""
-
 # Optimize Image to black/white, will write a new Temp file
 def optimizeImage(bw):
 
 	print('Optimization: \t', end='')
 
 	p = execute('magick ' +TempFile + bw +'.'+TempFormat+' -threshold 65%  ' + TempFile + '.bw.'+TempFormat+'')
-	#p = execute('/usr/bin/unpaper --layout single --no-wipe --no-blackfilter --no-mask-center --no-mask-scan --no-border --no-border-align ' + TempFile + bw +'.'+TempFormat+' ' + TempFile + '.bw.'+TempFormat+'')
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
@@ -324,8 +300,6 @@ def optimizeImage(bw):
 
 # Convert TempFormat to SaveFormatScanOnly (used when scanning only)
 def convertToImage(bw):
-
-	global SaveFormatScanOnly
 
 	print('Convert: \t', end='')
 
@@ -347,19 +321,12 @@ def ocr(save, language):
 	if language == 'ger':
 		language = 'deu'
 
-	#p = execute('pdfsandwich -layout single -enforcehocr2pdf -lang '+language+' -o '+save+'.pdf '+TempFile+'.merged.pdf')
 	p = execute('pdfsandwich -nopreproc -layout none -lang '+language+' -o '+save+'.pdf '+TempFile+'.merged.pdf')
-	#p = execute('/usr/bin/ocrodjvu --language '+language+' -o '+save+'.'+SaveFormatOCR+' '+TempFile+'.merged.'+SaveFormatOCR+'')
 
 	if p[0] != 0:
 		sys.exit ('Error! ' + p[1])
 	else:
 		print('Done.')
-
-# Merge all Tempfiles to one djvu file
-#def MergeDjvu():
-#	for var in *.otrkey; do nice -n 5 /usr/bin/otrtool blabla mit $var; done
-
 
 def print_output_size(filepath):
 	try:
@@ -421,10 +388,7 @@ def main():
 	if not output_given:
 		args.output = os.path.splitext(prompt_filename())[0]
 
-	global TempFile, SaveFile, verbose, _temp_prefix
-
-	# Process verbose-switch ...
-	verbose = args.verbose
+	global TempFile, SaveFile, _temp_prefix
 
 	# Path and name (random string) of temporary file without extension
 	RandomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6))
@@ -581,4 +545,4 @@ def main():
 
 
 if __name__ == "__main__":
-		main()
+	main()
