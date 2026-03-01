@@ -123,7 +123,6 @@ except ImportError:
 
 def prompt_filename():
 	"""Interactive filename prompt before scanning. Returns chosen name (no extension)."""
-	prefill = datetime.now().strftime('%Y-%m-%d') + '_'
 	try:
 		if _has_prompt_toolkit:
 			name = pt_prompt(
@@ -131,17 +130,12 @@ def prompt_filename():
 				completer=_FileNameCompleter(),
 				validator=_FileExistsValidator(),
 				validate_while_typing=True,
-				default=prefill,
 			).strip()
 		else:
-			readline.set_startup_hook(lambda: readline.insert_text(prefill))
-			try:
-				name = input('Output filename (without .pdf): ').strip()
-			finally:
-				readline.set_startup_hook()
+			name = input('Output filename (without .pdf): ').strip()
 	except KeyboardInterrupt:
 		sys.exit(1)
-	return name if name else prefill.rstrip('_')
+	return name if name else datetime.now().strftime('%Y-%m-%d')
 
 
 def llm_rename(current_path):
