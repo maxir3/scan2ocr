@@ -11,7 +11,7 @@ TempFormat='pnm'			# Image format used for intermediate processing
 OllamaModel='mistral'	# Local ollama model for filename suggestions; set to '' to disable
 
 import argparse
-from subprocess import call, Popen, PIPE
+from subprocess import call, Popen, PIPE, STDOUT
 import atexit
 from datetime import datetime
 import glob
@@ -330,33 +330,35 @@ def ocr(save, language, temp_file, total_pages=1):
 		language = 'deu'
 
 	cmd = shlex.split(
-		'pdfsandwich -nopreproc -layout none -lang ' + language
+		'stdbuf -oL pdfsandwich -nopreproc -layout none -nthreads 1 -lang ' + language
 		+ ' -o ' + save + '.pdf ' + temp_file + '.merged.pdf'
 	)
 
-	page_re = re.compile(r'^Processing page \d+\.')
-	pages_done = 0
+	# "Processing page N." appears just before tesseract starts on page N,
+	# so page N-1 is complete at that point. We lag by one so 100% means done.
+	page_re = re.compile(r'^Processing page (\d+)\.')
+	other_lines = []
 
+	sys.stderr.write('OCRing...\n')
 	draw_progress_bar(0, total_pages)
 
-	p = Popen(cmd, stdout=PIPE, stderr=PIPE, env=my_env)
+	p = Popen(cmd, stdout=PIPE, stderr=STDOUT, env=my_env)
 
 	for raw_line in p.stdout:
 		line = raw_line.decode('utf-8', errors='replace').rstrip('\n')
-		if page_re.match(line):
-			pages_done += 1
-			draw_progress_bar(min(pages_done, total_pages), total_pages)
+		m = page_re.match(line)
+		if m:
+			pages_before = int(m.group(1)) - 1
+			draw_progress_bar(pages_before, total_pages)
+		else:
+			other_lines.append(line)
 
-	raw_stderr = p.stderr.read()
 	p.wait()
-
-	if pages_done == 0:
-		draw_progress_bar(total_pages, total_pages)
-
+	draw_progress_bar(total_pages, total_pages)
 	sys.stderr.write('\n')
 
 	if p.returncode != 0:
-		raise RuntimeError(raw_stderr.decode('utf-8', errors='replace'))
+		raise RuntimeError('\n'.join(other_lines))
 
 def print_output_size(filepath):
 	try:
