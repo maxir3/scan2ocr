@@ -268,64 +268,95 @@ def execute(cmd, stdin='', env=None):
 		return (p.returncode, stderr.decode('utf-8', errors='replace'))
 
 # Executes scanimage (sane)
-def scan(resolution, width, height, progress):
-
+def scan(resolution, width, height, progress, temp_file):
+	cmd = ['scanimage', '--format=' + TempFormat, '-d', device,
+	       '--resolution', resolution, '-x', width, '-y', height]
 	if progress:
-		StringProgress = ' -p'
-	else:
-		StringProgress = ''
+		cmd.append('-p')
+	cmd.extend(shlex.split(AdditionalScanOptions))
 
 	print('Scanning...')
-	ret = call('scanimage --format='+TempFormat+' -d ' + device + ' --resolution '+resolution+' -x '+width+' -y '+height+StringProgress+' '+AdditionalScanOptions+' >' +TempFile+ '.'+TempFormat+'', shell=True)
-
-	if ret == 0:
-		print('Scan done.')
-		return True
-	else:
-		print('Error (exit code ' + str(ret) + ').')
+	try:
+		with open(temp_file + '.' + TempFormat, 'wb') as out:
+			p = Popen(cmd, stdout=out, stderr=PIPE)
+			_, stderr = p.communicate()
+		if p.returncode == 0:
+			print('Scan done.')
+			return True
+		else:
+			print('Error (exit code %d): %s' % (
+				p.returncode, stderr.decode('utf-8', errors='replace').strip()))
+			return False
+	except OSError as e:
+		print('Error: ' + str(e))
 		return False
 
 # Optimize Image to black/white, will write a new Temp file
-def optimizeImage(bw):
-
+def optimizeImage(bw, temp_file):
 	print('Optimization: \t', end='')
 
-	p = execute('magick ' +TempFile + bw +'.'+TempFormat+' -threshold 65%  ' + TempFile + '.bw.'+TempFormat+'')
+	p = execute('magick ' + temp_file + bw + '.' + TempFormat + ' -threshold 65%  ' + temp_file + '.bw.' + TempFormat + '')
 
 	if p[0] != 0:
-		sys.exit ('Error! ' + p[1])
-	else:
-		print('Done.')
+		raise RuntimeError(p[1])
+	print('Done.')
 
 # Convert TempFormat to SaveFormatScanOnly (used when scanning only)
-def convertToImage(bw):
-
+def convertToImage(bw, temp_file, save_file):
 	print('Convert: \t', end='')
 
-	p = execute('magick ' +TempFile + bw + '.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly)
+	p = execute('magick ' + temp_file + bw + '.' + TempFormat + ' ' + save_file + '.' + SaveFormatScanOnly)
 
 	if p[0] != 0:
-		sys.exit ('Error converting '+TempFormat+' to ' + SaveFormatScanOnly + ': ' + p[1])
-	else:
-		print('Done.')
+		raise RuntimeError('Error converting ' + TempFormat + ' to ' + SaveFormatScanOnly + ': ' + p[1])
+	print('Done.')
+
+def draw_progress_bar(done, total, width=40):
+	if total <= 0:
+		return
+	fraction = done / total
+	filled = int(round(fraction * width))
+	bar = '\u2588' * filled + '\u2591' * (width - filled)
+	pct = int(fraction * 100)
+	sys.stderr.write('\r[%s] %3d%%  (%d/%d)' % (bar, pct, done, total))
+	sys.stderr.flush()
 
 # Do ocr on a single image file
-def ocr(save, language):
-
-	print('OCR: \t', end='')
-
+def ocr(save, language, temp_file, total_pages=1):
 	my_env = os.environ.copy()
 	my_env["MALLOC_CHECK_"] = '0'
 
 	if language == 'ger':
 		language = 'deu'
 
-	p = execute('pdfsandwich -nopreproc -layout none -lang '+language+' -o '+save+'.pdf '+TempFile+'.merged.pdf')
+	cmd = shlex.split(
+		'pdfsandwich -nopreproc -layout none -lang ' + language
+		+ ' -o ' + save + '.pdf ' + temp_file + '.merged.pdf'
+	)
 
-	if p[0] != 0:
-		sys.exit ('Error! ' + p[1])
-	else:
-		print('Done.')
+	page_re = re.compile(r'^Processing page \d+\.')
+	pages_done = 0
+
+	draw_progress_bar(0, total_pages)
+
+	p = Popen(cmd, stdout=PIPE, stderr=PIPE, env=my_env)
+
+	for raw_line in p.stdout:
+		line = raw_line.decode('utf-8', errors='replace').rstrip('\n')
+		if page_re.match(line):
+			pages_done += 1
+			draw_progress_bar(min(pages_done, total_pages), total_pages)
+
+	raw_stderr = p.stderr.read()
+	p.wait()
+
+	if pages_done == 0:
+		draw_progress_bar(total_pages, total_pages)
+
+	sys.stderr.write('\n')
+
+	if p.returncode != 0:
+		raise RuntimeError(raw_stderr.decode('utf-8', errors='replace'))
 
 def print_output_size(filepath):
 	try:
@@ -338,21 +369,16 @@ def print_output_size(filepath):
 		pass
 
 # Remove garbage files, if existing
-def CleanUp(filename = ''):
-
-	if (filename == ''):
-		filename = TempFile
-
+def CleanUp(filename):
 	for f in glob.glob(filename + '*.*'):
 		os.remove(f)
 
 
-
 # Returns True in case the output file already exists.
-def OutputFileExists(SaveFile, mode):
+def OutputFileExists(save_file, mode):
 	return (
-		(os.path.exists(SaveFile + '.' + SaveFormatOCR) and mode in ('scanocr', 'ocr'))
-		or (os.path.exists(SaveFile + '.' + SaveFormatScanOnly) and mode == 'scan')
+		(os.path.exists(save_file + '.' + SaveFormatOCR) and mode in ('scanocr', 'ocr'))
+		or (os.path.exists(save_file + '.' + SaveFormatScanOnly) and mode == 'scan')
 	)
 
 
@@ -386,157 +412,171 @@ def main():
 	if not output_given:
 		args.output = os.path.splitext(prompt_filename())[0]
 
-	global TempFile, SaveFile, _temp_prefix
+	global _temp_prefix
 
 	# Path and name (random string) of temporary file without extension
 	RandomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6))
-	TempFile = '/tmp/scanner_'+ RandomString + args.output
-	SaveFile = os.getcwd() + '/' + args.output
-	_temp_prefix = '/tmp/scanner_' + RandomString + args.output
+	temp_file = '/tmp/scanner_' + RandomString + args.output
+	save_file = os.getcwd() + '/' + args.output
+	_temp_prefix = temp_file
 
 	# check if output file exists
-	if OutputFileExists(SaveFile, args.mode):
+	if OutputFileExists(save_file, args.mode):
 		sys.exit('Output file exists.')
 
-	# Create multi-page OCR'ed PDF
-	if args.multi:
-		page_num = 0
-		done = False
-		while not done:
-			page_num += 1
+	try:
+		# Create multi-page OCR'ed PDF
+		if args.multi:
+			page_num = 0
+			done = False
+			while not done:
+				page_num += 1
 
-			# Inner loop: rescan this page if needed
-			while True:
-				TempFile = '/tmp/scanner_'+ RandomString + args.output + '_' + str(page_num)
-				print('--- Page ' + str(page_num) + ' ---')
-
-				if not scan(args.resolution, args.width, args.height, args.progress):
-					for f in glob.glob(TempFile + '*'):
-						os.remove(f)
-					answer = input('Insert document and press Enter to retry (q = abort): ').strip().lower()
-					if answer == 'q':
-						done = True
-						page_num -= 1
-						break
-					continue  # retry same page
-
-				if args.color:
-					preview_file = TempFile + '.' + TempFormat
-				else:
-					optimizeImage('')
-					preview_file = TempFile + '.bw.' + TempFormat
-
-				viewer_proc = show_image(preview_file)
+				# Inner loop: rescan this page if needed
 				while True:
-					answer = input('Page ok? [Enter = next page, n = rescan, r = rotate 90°, q = done]: ').strip().lower()
-					if answer == 'r':
-						close_viewer(viewer_proc)
-						call(['magick', 'mogrify', '-rotate', '90', preview_file])
-						viewer_proc = show_image(preview_file)
+					temp_file = _temp_prefix + '_' + str(page_num)
+					print('--- Page ' + str(page_num) + ' ---')
+
+					if not scan(args.resolution, args.width, args.height, args.progress, temp_file):
+						for f in glob.glob(temp_file + '*'):
+							os.remove(f)
+						answer = input('Insert document and press Enter to retry (q = abort): ').strip().lower()
+						if answer == 'q':
+							done = True
+							page_num -= 1
+							break
+						continue  # retry same page
+
+					if args.color:
+						preview_file = temp_file + '.' + TempFormat
 					else:
+						optimizeImage('', temp_file)
+						preview_file = temp_file + '.bw.' + TempFormat
+
+					viewer_proc = show_image(preview_file)
+					while True:
+						answer = input('Page ok? [Enter = next page, n = rescan, r = rotate 90°, q = done]: ').strip().lower()
+						if answer == 'r':
+							close_viewer(viewer_proc)
+							call(['magick', 'mogrify', '-rotate', '90', preview_file])
+							viewer_proc = show_image(preview_file)
+						else:
+							break
+					close_viewer(viewer_proc)
+
+					if answer == 'n':
+						# Delete temp files for this page and rescan
+						for f in glob.glob(temp_file + '*'):
+							os.remove(f)
+						page_num -= 1  # will be incremented again at top of outer loop
 						break
-				close_viewer(viewer_proc)
+					elif answer == 'q':
+						done = True
+						break
+					else:
+						break  # keep page, continue to next
 
-				if answer == 'n':
-					# Delete temp files for this page and rescan
-					for f in glob.glob(TempFile + '*'):
-						os.remove(f)
-					page_num -= 1  # will be incremented again at top of outer loop
-					break
-				elif answer == 'q':
-					done = True
-					break
+			if page_num == 0:
+				sys.exit('No pages scanned.')
+
+			print('Scanned ' + str(page_num) + ' page(s) in total.')
+
+			# ocr or no ocr
+			last_temp = _temp_prefix + '_' + str(page_num)
+			if args.mode == 'scanocr':
+				if args.color:
+					page_files = [_temp_prefix + '_' + str(i) + '.' + TempFormat for i in range(1, page_num + 1)]
 				else:
-					break  # keep page, continue to next
+					page_files = [_temp_prefix + '_' + str(i) + '.bw.' + TempFormat for i in range(1, page_num + 1)]
+				print('Merging %d page(s) into PDF...' % page_num, end='', flush=True)
+				ret = call(['magick'] + page_files + [last_temp + '.merged.pdf'])
+				if ret != 0:
+					print(' Failed.')
+					sys.exit('Error: magick merge failed (exit code %d).' % ret)
+				print(' Done.')
+				ocr(save_file, args.language, last_temp, total_pages=page_num)
+			elif args.mode == 'scan':
+				if args.color:
+					page_files = [_temp_prefix + '_' + str(i) + '.' + TempFormat for i in range(1, page_num + 1)]
+				else:
+					page_files = [_temp_prefix + '_' + str(i) + '.bw.' + TempFormat for i in range(1, page_num + 1)]
+				call(['magick'] + page_files + [save_file + '.' + SaveFormatScanOnly])
 
-		print('Scanned ' + str(page_num) + ' page(s) in total.')
+			# Clean up temporary files
+			CleanUp(_temp_prefix)
 
-		# ocr or no ocr
-		page_glob = '/tmp/scanner_'+ RandomString + args.output
-		if args.mode == 'scanocr':
+			if args.mode == 'scanocr':
+				out = save_file + '.' + SaveFormatOCR
+				final = llm_rename(out) if args.llm else out
+				print_output_size(final)
+			elif args.mode == 'scan':
+				print_output_size(save_file + '.' + SaveFormatScanOnly)
+
+			sys.exit(0)
+
+		# Normal operation if not in multipage-mode
+		while True:
+			if not scan(args.resolution, args.width, args.height, args.progress, temp_file):
+				for f in glob.glob(temp_file + '*'):
+					os.remove(f)
+				answer = input('Insert document and press Enter to retry (q = abort): ').strip().lower()
+				if answer == 'q':
+					sys.exit(1)
+				continue
+
 			if args.color:
-				call('magick '+page_glob+'_*.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
+				preview_file = temp_file + '.' + TempFormat
+				blackwhite = ''
 			else:
-				call('magick '+page_glob+'_*.bw.'+TempFormat+' '+TempFile+'.merged.pdf', shell=True)
-			ocr(SaveFile, args.language)
-		elif args.mode == 'scan':
-			if args.color:
-				call('magick '+page_glob+'_*.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly, shell=True)
-			else:
-				call('magick '+page_glob+'_*.bw.'+TempFormat+' '+SaveFile+'.'+SaveFormatScanOnly, shell=True)
+				optimizeImage('', temp_file)
+				preview_file = temp_file + '.bw.' + TempFormat
+				blackwhite = '.bw'
 
-		# Clean up temporary files
-		CleanUp('/tmp/scanner_'+ RandomString + args.output)
+			viewer_proc = show_image(preview_file)
+			while True:
+				answer = input('Page ok? [Enter = continue, n = rescan, r = rotate 90°, q = abort]: ').strip().lower()
+				if answer == 'r':
+					close_viewer(viewer_proc)
+					call(['magick', 'mogrify', '-rotate', '90', preview_file])
+					viewer_proc = show_image(preview_file)
+				else:
+					break
+			close_viewer(viewer_proc)
+
+			if answer == 'n':
+				for f in glob.glob(temp_file + '*'):
+					os.remove(f)
+				continue
+			elif answer == 'q':
+				sys.exit(1)
+			else:
+				break
+
+		# merge to pdf (after preview so rotations are included)
+		if args.color:
+			call(['magick', temp_file + '.' + TempFormat, temp_file + '.merged.' + SaveFormatOCR])
+		else:
+			call(['magick', temp_file + '.bw.' + TempFormat, temp_file + '.merged.' + SaveFormatOCR])
+
+		# convert TempFormat to image-format
+		if args.mode == 'scan':
+			convertToImage(blackwhite, temp_file, save_file)
+
+		# ocr
+		if args.mode == 'scanocr':
+			ocr(save_file, args.language, temp_file, total_pages=1)
+
+		CleanUp(temp_file)
 
 		if args.mode == 'scanocr':
-			out = SaveFile + '.' + SaveFormatOCR
+			out = save_file + '.' + SaveFormatOCR
 			final = llm_rename(out) if args.llm else out
 			print_output_size(final)
 		elif args.mode == 'scan':
-			print_output_size(SaveFile + '.' + SaveFormatScanOnly)
+			print_output_size(save_file + '.' + SaveFormatScanOnly)
 
-		sys.exit(0)
-
-	# Normal operation if not in multipage-mode
-	while True:
-		if not scan(args.resolution, args.width, args.height, args.progress):
-			for f in glob.glob(TempFile + '*'):
-				os.remove(f)
-			answer = input('Insert document and press Enter to retry (q = abort): ').strip().lower()
-			if answer == 'q':
-				sys.exit(1)
-			continue
-
-		if args.color:
-			preview_file = TempFile + '.' + TempFormat
-			blackwhite = ''
-		else:
-			optimizeImage('')
-			preview_file = TempFile + '.bw.' + TempFormat
-			blackwhite = '.bw'
-
-		viewer_proc = show_image(preview_file)
-		while True:
-			answer = input('Page ok? [Enter = continue, n = rescan, r = rotate 90°, q = abort]: ').strip().lower()
-			if answer == 'r':
-				close_viewer(viewer_proc)
-				call(['magick', 'mogrify', '-rotate', '90', preview_file])
-				viewer_proc = show_image(preview_file)
-			else:
-				break
-		close_viewer(viewer_proc)
-
-		if answer == 'n':
-			for f in glob.glob(TempFile + '*'):
-				os.remove(f)
-			continue
-		elif answer == 'q':
-			sys.exit(1)
-		else:
-			break
-
-	# merge to pdf (after preview so rotations are included)
-	if args.color:
-		call('magick '+TempFile+'.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
-	else:
-		call('magick '+TempFile+'.bw.'+TempFormat+' '+TempFile+'.merged.'+SaveFormatOCR+'', shell=True)
-
-	# convert TempFormat to image-format
-	if (args.mode == 'scan'):
-		convertToImage(blackwhite)
-
-	# ocr
-	if (args.mode == 'scanocr'):
-		ocr(SaveFile, args.language)
-
-	CleanUp()
-
-	if args.mode == 'scanocr':
-		out = SaveFile + '.' + SaveFormatOCR
-		final = llm_rename(out) if args.llm else out
-		print_output_size(final)
-	elif args.mode == 'scan':
-		print_output_size(SaveFile + '.' + SaveFormatScanOnly)
+	except RuntimeError as e:
+		sys.exit('Error: ' + str(e))
 
 	# End program
 	sys.exit(0)
