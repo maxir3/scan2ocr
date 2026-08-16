@@ -153,6 +153,17 @@ Each page gets a unique, never-reused numeric id; page order lives in the page l
 
 `scan2file` accepts `-l ger` (mapped internally to `deu` for tesseract/pdfsandwich). `ocrscript` hardcodes `deu`.
 
+## Tests
+
+`./tests/run` exercises the whole scan flow without a scanner — `scanimage`,
+`feh` and `pdfsandwich` are stubbed in `tests/fakebin/`. Run it after touching
+`scan2file`; it exits non-zero on failure.
+
+Scenarios run twice over, through pipes **and** through a real pseudo terminal.
+The pty half is not redundant: with a pipe `sys.stdin.isatty()` is false, so
+raw-mode key reading, the automatic terminal preview and the graphics protocol
+probe never execute. See `tests/README.md`.
+
 ## Known limitations / TODO
 
 See `TODO` for the full list and deferred ideas.

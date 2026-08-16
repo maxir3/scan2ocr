@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""Test suite for scan2file. Runs without a scanner: scanimage, feh and
+pdfsandwich are replaced by the stubs in tests/fakebin.
+
+    ./tests/run            run everything
+    ./tests/run rotation   run scenarios whose name contains "rotation"
+    ./tests/run -v         print the full transcript of failing scenarios
+"""
+
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import (build_pages, make_env, run_pipe, run_pty, SCRIPT,
+                     DA1_SIXEL)
+
+VERBOSE = False
+results = []
+
+
+def check(name, text, code, expect=(), reject=(), exit_code=None):
+	problems = []
+	for pattern in expect:
+		if not re.search(pattern, text):
+			problems.append('missing: ' + pattern)
+	for pattern in reject:
+		if re.search(pattern, text):
+			problems.append('unexpected: ' + pattern)
+	if exit_code is not None and code != exit_code:
+		problems.append('exit %s, expected %s' % (code, exit_code))
+	results.append((name, problems, text))
+	print(('  ok   ' if not problems else '  FAIL ') + name)
+	for p in problems:
+		print('         ' + p)
+
+
+# --------------------------------------------------------------------------
+# Scenarios driven over pipes: flow, filenames, page bookkeeping
+# --------------------------------------------------------------------------
+
+def pipe_scenarios(root, pages):
+	def go(name, args, keys, workname=None, fail_on=None, pages_dir=None, **kw):
+		work = os.path.join(root, workname or re.sub(r'\W+', '_', name))
+		os.makedirs(work, exist_ok=True)
+		env = make_env(work, pages_dir or pages, fail_on=fail_on)
+		text, code = run_pipe(args, keys, work, env)
+		check(name, text, code, **kw)
+		return work
+
+	print('\npipe scenarios')
+
+	go('single page: preview is drawn in the terminal',
+	   ['-o', 'A', '-m', 'scan'], [''],
+	   expect=[r'\[v\] view', r'Output:.*A\.pdf'])
+
+	go('multi page: overview appears before OCR',
+	   ['-o', 'B', '-mu', '-m', 'scan'], ['', 'q', ''],
+	   expect=[r'\[Enter\] continue', r'Scanned 2 page'])
+
+	go('overview on [o], then back to the page',
+	   ['-o', 'C', '-mu', '-m', 'scan'], ['', 'o', '', 'q', ''],
+	   expect=[r'back to this page'])
+
+	go('[e] re-enters the page review',
+	   ['-o', 'D', '-mu', '-m', 'scan'], ['', 'q', 'e', '', 'q', ''],
+	   expect=[r'Output:.*D\.pdf'])
+
+	go('[d] drops a page',
+	   ['-o', 'E', '-mu', '-m', 'scan'], ['', 'd', 'q', ''],
+	   expect=[r'Page dropped'])
+
+	go('blank page is flagged',
+	   ['-o', 'F', '-mu', '-m', 'scan'], ['q', ''],
+	   pages_dir=os.path.join(pages, 'blank'),
+	   expect=[r'looks blank', r'blank\?'])
+
+	go('rotation and threshold are reported',
+	   ['-o', 'G', '-m', 'scan'], ['r', 't', '40', ''],
+	   expect=[r'rot 90', r'thr 40'])
+
+	go('scanner error offers a retry',
+	   ['-o', 'H', '-m', 'scan'], ['', ''], fail_on=1,
+	   expect=[r'Insert document', r'Output:'])
+
+	go('spaces and dots survive in the output name',
+	   ['-o', 'Rechnung 12.03.2026', '-m', 'scan'], [''],
+	   workname='dots',
+	   expect=[r'Rechnung 12\.03\.2026\.pdf'])
+
+	go('percent in the output name (scan mode)',
+	   ['-o', 'Rabatt 50%', '-mu', '-m', 'scan'], ['', 'q', ''],
+	   workname='pct_scan',
+	   expect=[r'Rabatt 50%\.pdf'], reject=[r'Rabatt 50%-0\.pdf'])
+
+	go('percent in the output name (ocr mode)',
+	   ['-o', 'Skonto 3%', '-mu'], ['', 'q', ''],
+	   workname='pct_ocr',
+	   expect=[r'Skonto 3%\.pdf'])
+
+	# Twelve pages, walk back to page 1, rescan it, walk forward again.
+	# The old numbering deleted _10.._19 when touching _1.
+	keys = [''] * 11 + ['b'] * 11 + ['n'] + [''] * 11 + ['q', '']
+	work = go('12 pages: back to page 1, rescan, no page lost',
+	          ['-o', 'Stapel', '-mu', '-m', 'scan', '--overview', 'off'], keys,
+	          workname='twelve', expect=[r'Scanned 12 page'])
+	info = subprocess.run(['pdfinfo', os.path.join(work, 'Stapel.pdf')],
+	                      capture_output=True, text=True).stdout
+	check('12 pages: output really has 12 pages', info, 0,
+	      expect=[r'Pages:\s+12'])
+
+	go('scan and OCR end to end',
+	   ['-o', 'I', '-mu'], ['', 'q', ''],
+	   expect=[r'OCRing', r'100%', r'Output:.*I\.pdf'])
+
+	go('colour mode',
+	   ['-o', 'J', '-c', '-m', 'scan'], [''],
+	   expect=[r'--mode Color', r'Output:'], reject=[r'thr \d'])
+
+	go('deskew and trim',
+	   ['-o', 'K', '--deskew', '--trim', '-m', 'scan'], [''],
+	   expect=[r'Output:'])
+
+	go('overview window mode',
+	   ['-o', 'L', '-mu', '-m', 'scan', '--overview', 'window'], ['', 'q', ''],
+	   expect=[r'Output:'])
+
+	go('overview off: no terminal preview',
+	   ['-o', 'M', '-mu', '-m', 'scan', '--overview', 'off'], ['', 'q'],
+	   expect=[r'Output:'], reject=[r'\[v\] view'])
+
+	print('\nargument and error handling')
+	for name, args, expect in [
+		('rejects an empty output name', ['-o', '', '-m', 'scan'],
+		 r'must not be empty'),
+		('rejects a path separator', ['-o', 'a/b', '-m', 'scan'],
+		 r'path separators'),
+		('rejects an out-of-range threshold', ['-o', 'X', '-t', '150'],
+		 r'between 1 and 99'),
+		('rejects an unknown mode', ['-m', 'nonsense'],
+		 r'No valid mode'),
+		('ocr mode is not implemented', ['-m', 'ocr'],
+		 r'not yet implemented'),
+	]:
+		work = os.path.join(root, re.sub(r'\W+', '_', name))
+		os.makedirs(work, exist_ok=True)
+		env = make_env(work, pages)
+		text, code = run_pipe(args, [], work, env)
+		check(name, text, code, expect=[expect], exit_code=1)
+
+
+# --------------------------------------------------------------------------
+# Scenarios that need a real terminal: raw key reads, isatty, capability probe
+# --------------------------------------------------------------------------
+
+def pty_scenarios(root, pages):
+	def go(name, args, keys, workname=None, fail_on=None, feh_log=None,
+	       da1=None, **kw):
+		work = os.path.join(root, 'pty_' + (workname or re.sub(r'\W+', '_', name)))
+		os.makedirs(work, exist_ok=True)
+		env = make_env(work, pages, fail_on=fail_on, feh_log=feh_log)
+		extra = {'da1': da1} if da1 else {}
+		text, code = run_pty(args, keys, work, env, **extra)
+		check(name, text, code, **kw)
+		return work, text
+
+	print('\npty scenarios (real terminal)')
+
+	go('single page: no viewer, preview in the terminal',
+	   ['-o', 'A', '-m', 'scan'], [b'\r'],
+	   expect=[r'┌─+┐', r'\[v\] view', r'Output:'])
+
+	go('multi page: overview after [q] on the page prompt',
+	   ['-o', 'B', '-mu', '-m', 'scan'], [b'\r', b'q', b'\r', b'\r'],
+	   expect=[r'\[Enter\] continue', r'Scanned 2 page'])
+
+	go('multi page: overview after the feeder runs empty',
+	   ['-o', 'C', '-mu', '-m', 'scan'], [b'\r', b'\r', b'q', b'\r', b'\r'],
+	   fail_on=3,
+	   expect=[r'Insert document', r'\[Enter\] continue', r'Output:'])
+
+	go('rotating redraws the preview and reports the angle',
+	   ['-o', 'D', '-m', 'scan'], [b'r', b'\r'],
+	   expect=[r'rot 90', r'(?s)┌─+┐.*┌─+┐'])
+
+	print('\npty scenarios: image viewer is opened only on demand')
+	for name, args, keys, expected_opens in [
+		('viewer stays closed without [v]', ['-m', 'scan'], [b'\r'], 0),
+		('[v] opens the viewer', ['-m', 'scan'], [b'v', b'\r'], 1),
+		('--overview off opens it automatically',
+		 ['-m', 'scan', '--overview', 'off'], [b'\r'], 1),
+	]:
+		work = os.path.join(root, 'feh_' + re.sub(r'\W+', '_', name))
+		os.makedirs(work, exist_ok=True)
+		log = os.path.join(work, 'feh.log')
+		env = make_env(work, pages, feh_log=log)
+		run_pty(['-o', 'V'] + args, keys, work, env)
+		opens = 0
+		if os.path.exists(log):
+			opens = sum(1 for line in open(log) if 'feh opened' in line)
+		check(name, 'viewer opened %d time(s)' % opens, 0,
+		      expect=[r'opened %d time' % expected_opens])
+
+	print('\npty scenarios: terminal capability probe')
+	go('sixel terminal selects the graphics path',
+	   ['-o', 'S', '-mu', '-m', 'scan', '--overview', 'auto'],
+	   [b'\r', b'q', b'\r', b'\r'], da1=DA1_SIXEL, workname='sixel',
+	   expect=[r'Output:'], reject=[r'┌─+┐\s*\n\s*│\s+Page \d+\s+│'])
+
+
+# --------------------------------------------------------------------------
+# Thumbnail geometry: the preview exists to show orientation and distortion,
+# so it must letterbox rather than stretch. Measured on solid black pages,
+# where the inked area is exactly the page.
+# --------------------------------------------------------------------------
+
+def geometry_scenarios(root):
+	import importlib.machinery
+	import importlib.util
+
+	print('\nthumbnail geometry')
+	loader = importlib.machinery.SourceFileLoader('scan2file', SCRIPT)
+	module = importlib.util.module_from_spec(
+		importlib.util.spec_from_loader('scan2file', loader))
+	loader.exec_module(module)
+
+	shapes = {
+		'portrait A4': ('620x877', 210 / 297),
+		'landscape A4': ('877x620', 297 / 210),
+		'square': ('700x700', 1.0),
+	}
+	for name, (size, want) in shapes.items():
+		path = os.path.join(root, 'geom_%s.pnm' % size)
+		subprocess.run(['magick', '-size', size, 'xc:black', path], check=True)
+
+		lines = module.thumbnail_lines(path, 40, 20)
+		filled = [(y, x) for y, line in enumerate(lines)
+		          for x, ch in enumerate(line) if ch != ' ']
+		if not filled:
+			check('%s thumbnail keeps its proportions' % name,
+			      'nothing was drawn', 0, expect=[r'never matches'])
+			continue
+
+		rows = max(y for y, _ in filled) - min(y for y, _ in filled) + 1
+		cols = max(x for _, x in filled) - min(x for _, x in filled) + 1
+		# a half-block cell holds 1x2 pixels and displays roughly square
+		got = cols / (rows * 2)
+		ok = abs(got - want) / want < 0.15
+		check('%s thumbnail keeps its proportions' % name,
+		      '%s: aspect %.2f, expected %.2f -> %s'
+		      % (name, got, want, 'ok' if ok else 'STRETCHED'), 0,
+		      expect=[r'-> ok$'])
+
+
+def main():
+	global VERBOSE
+	args = [a for a in sys.argv[1:]]
+	if '-v' in args:
+		VERBOSE = True
+		args.remove('-v')
+	only = args[0] if args else None
+
+	for tool in ('magick', 'pdfinfo'):
+		if not shutil.which(tool):
+			sys.exit('missing required tool: ' + tool)
+
+	cache = os.path.join(tempfile.gettempdir(), 'scan2file-testpages')
+	pages = build_pages(cache)
+
+	root = tempfile.mkdtemp(prefix='scan2file-tests-')
+	try:
+		pipe_scenarios(root, pages)
+		geometry_scenarios(root)
+		pty_scenarios(root, pages)
+	finally:
+		shutil.rmtree(root, ignore_errors=True)
+
+	leftovers = glob.glob('/tmp/scanner_*')
+	check('no temporary files left behind',
+	      'leftovers: %d' % len(leftovers), 0, expect=[r'leftovers: 0'])
+
+	selected = [r for r in results if not only or only in r[0]]
+	failed = [r for r in selected if r[1]]
+	print('\n%d scenario(s), %d failed' % (len(selected), len(failed)))
+	if failed and VERBOSE:
+		for name, problems, text in failed:
+			print('\n===== %s =====\n%s' % (name, text[-3000:]))
+	return 1 if failed else 0
+
+
+if __name__ == '__main__':
+	sys.exit(main())

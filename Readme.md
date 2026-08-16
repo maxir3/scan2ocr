@@ -30,6 +30,7 @@ SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'       # ollama model for --llm; set to '' to disable
 Threshold = 65                # default B/W threshold in percent; override with -t
 BlankInkPercent = 0.1         # pages below this ink coverage are flagged as blank
+OverviewMode = 'text'         # default for --overview: auto|graphics|window|text|off
 ```
 
 # Usage
@@ -125,6 +126,15 @@ Thumbnails are fitted, never stretched, so a rotated page appears as a landscape
 The raw scan is kept untouched and every preview is re-rendered from it, so rotation and threshold can be changed in any order and any number of times without quality loss.
 
 On scanner error (e.g. feeder empty), the user is prompted to insert a document and retry.
+
+# Tests
+
+```bash
+./tests/run
+```
+
+Runs the whole scan flow without a scanner (stubs for `scanimage`, `feh` and
+`pdfsandwich`). See `tests/README.md`.
 
 # Known limitations
 

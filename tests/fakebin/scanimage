@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stand-in for SANE's scanimage. Writes a pre-rendered page to stdout, one per
+# call, so a whole scanning session can run without hardware.
+#
+#   FAKE_SCAN_DIR      directory holding p1.pnm, p2.pnm, ...
+#   FAKE_SCAN_COUNTER  file holding the call count
+#   FAKE_SCAN_FAIL     call number that should fail (simulates an empty feeder)
+#   FAKE_SCAN_LOG      optional log of invocations
+
+COUNTER="${FAKE_SCAN_COUNTER:-/tmp/fake_scan_counter}"
+N=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 ))
+echo "$N" > "$COUNTER"
+echo "scanimage call #$N: $*" >> "${FAKE_SCAN_LOG:-/dev/null}"
+
+if [[ -n "$FAKE_SCAN_FAIL" && "$N" == "$FAKE_SCAN_FAIL" ]]; then
+	echo "scanimage: no SANE devices found" >&2
+	exit 1
+fi
+
+SRC="${FAKE_SCAN_DIR}/p${N}.pnm"
+[[ -f "$SRC" ]] || SRC="${FAKE_SCAN_DIR}/p1.pnm"
+cat "$SRC"

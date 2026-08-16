@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stand-in for the image viewer. Records that it was opened and then blocks,
+# so close_viewer() actually has something to terminate.
+echo "feh opened: $*" >> "${FEH_LOG:-/dev/null}"
+sleep 30
