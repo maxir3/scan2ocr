@@ -18,6 +18,7 @@ A CLI toolset for scanning documents, converting them to black-and-white PDFs, a
 - `merge2pdfbw` — merges images/PDFs into a single B/W PDF (ocrscript only); may live at `~/.bin/merge2pdfbw`
 - `tesseract` — OCR engine (invoked by pdfsandwich)
 - `python-prompt_toolkit` — live autocomplete in filename prompt (optional; falls back to readline)
+- `chafa` — inline image page overview (optional; falls back to a character grid). Only produces a real image when the terminal speaks the kitty graphics protocol (ghostty) or sixel (foot); Alacritty supports neither.
 - `poppler` / `pdftotext` — text extraction for LLM filename suggestion (optional, `--llm` only)
 - `ollama` — local LLM for filename suggestion (optional, `--llm` only); default model: `mistral`
 
@@ -64,6 +65,10 @@ Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
 
 # Keep intermediate files for debugging
 ./scan2file --keep-temp
+
+# Page overview rendering (default: auto)
+./scan2file -mu --overview text      # force the character grid
+./scan2file -mu --overview off       # no overview at all
 ```
 
 ## Interactive scan flow
@@ -86,6 +91,21 @@ Page 3/5 [12.4% ink, thr 65%, rot 90]
 - **q** — abort (single-page) or keep this page and proceed to OCR (multi-page)
 
 Pages whose ink coverage falls below `BlankInkPercent` are flagged with a blank-page warning before the prompt.
+
+## Page overview
+
+In multi-page mode, **o** shows all pages scanned so far, and the same overview appears automatically before the OCR run (the last chance to fix something before the expensive step):
+
+```
+[Enter] continue  [e] edit pages  [q] abort
+```
+
+`e` re-enters the page review starting at page 1. Two rendering paths, chosen by `--overview` (`auto` by default):
+
+- **graphics** — `magick montage` builds a labelled contact sheet, piped to `chafa`. Used when `chafa` is installed *and* the terminal answers the capability probe. Real, readable thumbnails.
+- **text** — a box grid drawn with `magick`-downscaled character thumbnails. Labels stay real text, which is why this is preferred over rasterizing the contact sheet when no graphics protocol is available.
+
+Protocol detection sends a kitty graphics query followed by a DA1 request in one round trip (`detect_graphics_protocol`); terminals that ignore the first still answer the second. `sixel` is recognised via DA1 attribute `4`. The result is cached for the process.
 
 The raw scan is never modified. Every preview is re-rendered from it with the pipeline `deskew → threshold → trim → rotate`, so rotation and threshold can be changed in any order without loss.
 

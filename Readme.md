@@ -13,6 +13,7 @@ CLI toolset for scanning documents, converting them to black-and-white PDFs, and
 - `tesseract` — OCR engine
 - `feh`, `display`, `eog`, or `xdg-open` — image preview during scanning (first found is used)
 - `python-prompt_toolkit` — live filename autocomplete (optional, falls back to readline)
+- `chafa` — inline image page overview (optional, falls back to a character grid)
 - `poppler` / `pdftotext` — text extraction for LLM suggestion (optional, `--llm` only)
 - `ollama` — local LLM for filename suggestion (optional, `--llm` only)
 
@@ -59,7 +60,29 @@ BlankInkPercent = 0.1         # pages below this ink coverage are flagged as bla
 --trim        crop the border around the page content (aggressive)
 --no-progress hide scan progress
 --keep-temp   keep intermediate files for debugging
+--overview M  page overview: auto | graphics | text | off (default: auto)
 ```
+
+## Page overview
+
+In multi-page mode, **o** shows all pages scanned so far, and the same overview appears automatically before OCR starts:
+
+```
+  ┌──────────────────────────┐  ┌──────────────────────────┐
+  │          Page 1          │  │          Page 2          │
+  ├──────────────────────────┤  ├──────────────────────────┤
+  │  -@*%#**%+@#. @.         │  │                          │
+  │   -:::. . ::  .          │  │                          │
+  │  :*++++++++++++++++++*-  │  │        .:-==-:.          │
+  │                          │  │                          │
+  ├──────────────────────────┤  ├──────────────────────────┤
+  │         6.3% ink         │  │          blank?          │
+  └──────────────────────────┘  └──────────────────────────┘
+
+[Enter] continue  [e] edit pages  [q] abort
+```
+
+With `chafa` installed **and** a terminal that speaks the kitty graphics protocol (ghostty) or sixel (foot), the overview is drawn as a real inline image instead — a labelled contact sheet built by `magick montage`. Alacritty supports neither protocol, so it gets the character grid above. Force either path with `--overview graphics` / `--overview text`.
 
 ## Filename prompt
 

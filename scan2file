@@ -11,9 +11,11 @@ TempFormat='pnm'			# Image format used for intermediate processing
 OllamaModel='mistral'	# Local ollama model for filename suggestions; set to '' to disable
 Threshold=65			# Default black/white threshold in percent
 BlankInkPercent=0.1		# Pages with less ink than this are flagged as blank
+OverviewThumbWidth=26	# Width of one page thumbnail in the text overview
+OverviewThumbHeight=14	# Height of one page thumbnail in the text overview
 
 import argparse
-from subprocess import Popen, PIPE, STDOUT
+from subprocess import Popen, PIPE, STDOUT, DEVNULL
 import atexit
 from datetime import datetime
 import glob
@@ -22,11 +24,13 @@ import os
 import random
 import readline
 import re
+import select
 import shlex
 import shutil
 import string
 import sys
 import termios
+import time
 import tty
 import urllib.request
 
@@ -316,6 +320,204 @@ def read_key(message):
 	return char.lower()
 
 
+## Page overview ##############################################################
+
+# Grayscale ramp, dark to light reversed: index 0 is white paper.
+_RAMP = ' .:-=+*#%@'
+_graphics_protocol = False	# False = not probed yet, None = none available
+
+
+# Asks the terminal what it can draw. The kitty graphics query is followed by
+# a DA1 request: terminals that ignore the first still answer the second, so
+# one round trip covers both protocols.
+def detect_graphics_protocol():
+	if not (sys.stdin.isatty() and sys.stdout.isatty()):
+		return None
+
+	query = '\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c'
+	fd = sys.stdin.fileno()
+	try:
+		old_settings = termios.tcgetattr(fd)
+	except termios.error:
+		return None
+
+	response = ''
+	try:
+		tty.setraw(fd)
+		sys.stdout.write(query)
+		sys.stdout.flush()
+		deadline = time.monotonic() + 0.5
+		while time.monotonic() < deadline:
+			ready, _, _ = select.select([fd], [], [], 0.1)
+			if not ready:
+				continue
+			chunk = os.read(fd, 256).decode('latin-1')
+			if not chunk:
+				break
+			response += chunk
+			if response.endswith('c'):	# DA1 terminator, both answers are in
+				break
+	except (OSError, ValueError):
+		return None
+	finally:
+		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+	if '_Gi=31;OK' in response:
+		return 'kitty'
+	m = re.search(r'\x1b\[\?([0-9;]*)c', response)
+	if m and '4' in m.group(1).split(';'):	# DA1 attribute 4 means sixel
+		return 'sixels'
+	return None
+
+
+def overview_backend(mode):
+	global _graphics_protocol
+
+	if mode == 'off':
+		return None
+	if mode == 'text':
+		return 'text'
+	if not shutil.which('chafa'):
+		return 'text'
+	if _graphics_protocol is False:
+		_graphics_protocol = detect_graphics_protocol()
+		if mode == 'graphics' and not _graphics_protocol:
+			# Forced: no answer from the terminal, so let chafa decide itself
+			_graphics_protocol = 'auto'
+	return 'graphics' if _graphics_protocol else 'text'
+
+
+def page_status(page):
+	if page.ink is None:
+		return '?'
+	if page.ink < BlankInkPercent:
+		return 'blank?'
+	return '%.1f%% ink' % page.ink
+
+
+# Renders one page as a block of text. Ink is amplified before downscaling,
+# otherwise thin strokes average away against the white paper and the
+# thumbnail comes out empty.
+def thumbnail_lines(path, cols, rows):
+	blank = [' ' * cols] * rows
+
+	p = Popen(['magick', path, '-colorspace', 'Gray',
+	           '-resize', '%dx%d!' % (cols, rows * 2),
+	           '-negate', '-evaluate', 'multiply', '3', '-negate',
+	           '-depth', '8', 'pgm:-'], stdout=PIPE, stderr=PIPE)
+	data, _ = p.communicate()
+	if p.returncode != 0:
+		return blank
+
+	# Binary PGM header: P5 <width> <height> <maxval>, comments start with #
+	fields = []
+	i = 0
+	while len(fields) < 4 and i < len(data):
+		while i < len(data) and data[i:i + 1].isspace():
+			i += 1
+		if data[i:i + 1] == b'#':
+			while i < len(data) and data[i:i + 1] != b'\n':
+				i += 1
+			continue
+		j = i
+		while j < len(data) and not data[j:j + 1].isspace():
+			j += 1
+		fields.append(data[i:j])
+		i = j
+	i += 1	# the single whitespace byte after maxval
+
+	try:
+		width, height = int(fields[1]), int(fields[2])
+	except (IndexError, ValueError):
+		return blank
+	raw = data[i:]
+	if width <= 0 or height <= 0 or len(raw) < width * height:
+		return blank
+
+	scale = len(_RAMP) - 1
+	lines = []
+	for y in range(0, min(height - 1, rows * 2 - 1), 2):
+		lines.append(''.join(
+			_RAMP[(255 - ((raw[y * width + x] + raw[(y + 1) * width + x]) // 2)) * scale // 255]
+			for x in range(min(width, cols))))
+	lines = [line.ljust(cols)[:cols] for line in lines[:rows]]
+	return lines + [' ' * cols] * (rows - len(lines))
+
+
+# Character grid: page thumbnails in boxes, labels stay real text.
+def overview_text(pages):
+	width = OverviewThumbWidth
+	height = OverviewThumbHeight
+	columns = shutil.get_terminal_size((80, 24)).columns
+	per_row = max(1, (columns - 2) // (width + 4))
+
+	print()
+	for start in range(0, len(pages), per_row):
+		chunk = pages[start:start + per_row]
+		thumbs = [thumbnail_lines(p.preview, width, height) for p in chunk]
+
+		def row(cells):
+			return '  ' + '  '.join(cells)
+
+		print(row(['┌' + '─' * width + '┐' for _ in chunk]))
+		print(row(['│' + ('Page %d' % (start + i + 1)).center(width) + '│'
+		           for i in range(len(chunk))]))
+		print(row(['├' + '─' * width + '┤' for _ in chunk]))
+		for line in range(height):
+			print(row(['│' + t[line] + '│' for t in thumbs]))
+		print(row(['├' + '─' * width + '┤' for _ in chunk]))
+		print(row(['│' + page_status(p).center(width) + '│' for p in chunk]))
+		print(row(['└' + '─' * width + '┘' for _ in chunk]))
+		print()
+	return True
+
+
+# Real inline image: magick builds the labelled contact sheet, chafa draws it
+# with whichever graphics protocol the terminal answered with.
+def overview_graphics(pages, protocol):
+	size = shutil.get_terminal_size((80, 24))
+	tile = min(len(pages), 5)
+
+	montage = ['magick', 'montage']
+	for i, page in enumerate(pages, 1):
+		montage.extend(['-label', 'Page %d\\n%s' % (i, page_status(page)), page.preview])
+	montage.extend(['-tile', '%dx' % tile, '-geometry', '220x300+8+8',
+	                '-background', 'white', '-fill', 'black', '-pointsize', '13',
+	                'png:-'])
+
+	chafa = ['chafa', '--animate', 'off',
+	         '--size', '%dx%d' % (max(20, size.columns - 2), max(10, size.lines - 6)), '-']
+	if protocol != 'auto':
+		chafa[1:1] = ['-f', protocol]
+
+	print()
+	# montage's stderr goes to DEVNULL on purpose: nobody reads it here, and a
+	# pipe nobody drains would deadlock montage once it fills up.
+	try:
+		builder = Popen(montage, stdout=PIPE, stderr=DEVNULL)
+		viewer = Popen(chafa, stdin=builder.stdout)
+		builder.stdout.close()
+		viewer.wait()
+		builder.wait()
+	except OSError:
+		return False
+	if viewer.returncode != 0 or builder.returncode != 0:
+		return False
+	print()
+	return True
+
+
+def show_overview(pages, mode):
+	if not pages:
+		return False
+	backend = overview_backend(mode)
+	if backend is None:
+		return False
+	if backend == 'graphics' and overview_graphics(pages, _graphics_protocol):
+		return True
+	return overview_text(pages)
+
+
 def ask_threshold(current):
 	try:
 		answer = input('New threshold in %% (1-99, current %d, Enter to keep): ' % current).strip()
@@ -408,6 +610,12 @@ parser.add_argument('--trim',
 					action='store_true',
 					default=False,
 					help='Crop uniform border around the page content (default: no)')
+parser.add_argument('--overview',
+					dest='overview',
+					choices=('auto', 'graphics', 'text', 'off'),
+					default='auto',
+					help='Page overview: auto (inline image if the terminal can, '
+					     'else character grid), graphics, text or off (default: auto)')
 
 ## OCR Options ##
 
@@ -600,7 +808,7 @@ def scan_with_retry(page, args, label):
 # Shows the page and asks what to do with it. Rotation and threshold are
 # applied in place; every other key ends the review.
 # Returns 'keep', 'rescan', 'drop', 'back', 'done' or 'abort'.
-def review_page(page, args, label, multi, can_go_back=False):
+def review_page(page, args, label, multi, can_go_back=False, pages=None):
 	dirty = True
 	viewer = None
 	try:
@@ -635,6 +843,8 @@ def review_page(page, args, label, multi, can_go_back=False):
 				keys += '  [d] drop'
 				if can_go_back:
 					keys += '  [b] back'
+				if pages and args.overview != 'off':
+					keys += '  [o] overview'
 				keys += '  [q] done'
 			else:
 				keys += '  [q] abort'
@@ -651,6 +861,10 @@ def review_page(page, args, label, multi, can_go_back=False):
 				if new_threshold != page.threshold:
 					page.threshold = new_threshold
 					dirty = True
+			elif answer == 'o' and multi and pages and args.overview != 'off':
+				close_viewer(viewer)
+				viewer = None
+				show_overview(pages, args.overview)
 			elif answer == 'b' and multi and can_go_back:
 				return 'back'
 			elif answer == 'n':
@@ -673,7 +887,8 @@ def review_stack(pages, start_index, args):
 	while 0 <= index < len(pages):
 		page = pages[index]
 		label = 'Page %d/%d' % (index + 1, len(pages))
-		action = review_page(page, args, label, args.multi, can_go_back=index > 0)
+		action = review_page(page, args, label, args.multi,
+		                     can_go_back=index > 0, pages=pages)
 
 		if action == 'rescan':
 			if scan_with_retry(page, args, label + ' (rescan)'):
@@ -762,6 +977,18 @@ def main():
 			sys.exit('No pages scanned.')
 
 		print('Scanned %d page(s) in total.' % len(pages))
+
+		# Last chance to fix something before the expensive OCR run
+		while args.multi and len(pages) > 1 and show_overview(pages, args.overview):
+			answer = read_key('[Enter] continue  [e] edit pages  [q] abort: ')
+			if answer == 'q':
+				sys.exit(1)
+			if answer != 'e':
+				break
+			if review_stack(pages, 0, args) == 'abort':
+				sys.exit(1)
+			if not pages:
+				sys.exit('No pages left.')
 
 		page_files = [p.preview for p in pages]
 
