@@ -397,14 +397,24 @@ def overview_backend(mode):
 		return None
 	if mode in ('text', 'window'):
 		return mode
-	if not shutil.which('chafa'):
-		return 'text'
-	if _graphics_protocol is False:
-		_graphics_protocol = detect_graphics_protocol()
-		if mode == 'graphics' and not _graphics_protocol:
-			# Forced: no answer from the terminal, so let chafa decide itself
-			_graphics_protocol = 'auto'
-	return 'graphics' if _graphics_protocol else 'text'
+
+	# 'graphics' and 'auto': draw inside the terminal if it can show pixels
+	if shutil.which('chafa'):
+		if _graphics_protocol is False:
+			_graphics_protocol = detect_graphics_protocol()
+			if mode == 'graphics' and not _graphics_protocol:
+				# Forced: no answer from the terminal, so let chafa decide itself
+				_graphics_protocol = 'auto'
+		if _graphics_protocol:
+			return 'graphics'
+
+	# No graphics protocol (Alacritty, xterm without sixel, ...). A contact
+	# sheet in the image viewer still beats character art, and this script
+	# opens that viewer for every page anyway. Use --overview text to insist
+	# on staying inside the terminal.
+	if find_image_viewer():
+		return 'window'
+	return 'text'
 
 
 def page_status(page):

@@ -108,7 +108,9 @@ Three rendering paths, chosen by `--overview`, whose default is the `OverviewMod
 
 - **graphics** — `magick montage` builds a labelled contact sheet, piped to `chafa`. Used when `chafa` is installed *and* the terminal answers the capability probe. Real thumbnails inside the terminal.
 - **window** — the same contact sheet, opened in the image viewer (`feh` etc.). Real thumbnails in *any* terminal, at the cost of a window. This is the option for Alacritty, which supports no graphics protocol.
-- **text** — a box grid drawn with `magick`-downscaled character thumbnails. Labels stay real text, which is why this is preferred over rasterizing the contact sheet when no graphics protocol is available.
+- **text** — a box grid drawn with `magick`-downscaled character thumbnails. Labels stay real text, which is why this is preferred over rasterizing the contact sheet into character art.
+
+`auto` walks these in order: **graphics** (terminal can show pixels) → **window** (an image viewer exists) → **text**. Opening a viewer in `auto` is deliberate: the script already opens one for every page, and character art is the weakest of the three. `--overview text` insists on staying inside the terminal.
 
 Protocol detection sends a kitty graphics query followed by a DA1 request in one round trip (`detect_graphics_protocol`); terminals that ignore the first still answer the second. `sixel` is recognised via DA1 attribute `4`. The result is cached for the process.
 

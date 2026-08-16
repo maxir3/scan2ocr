@@ -90,7 +90,7 @@ Three ways to draw it, selected with `--overview` (default: the `OverviewMode` c
 | `window` | Real thumbnails as a contact sheet in the image viewer | an image viewer (`feh` etc.) — works in **any** terminal, including Alacritty |
 | `text` | The character grid above | nothing |
 
-`auto` picks `graphics` when the terminal answers the capability probe, otherwise `text`. Alacritty supports neither graphics protocol, so use `--overview window` there — or set `OverviewMode = 'window'` at the top of the script to make it the default.
+`auto` tries them in order: `graphics` → `window` → `text`. In ghostty or foot you therefore get thumbnails inside the terminal; in Alacritty, which supports neither graphics protocol, you get the contact sheet in the image viewer. Use `--overview text` if you would rather stay inside the terminal, or set `OverviewMode` at the top of the script to fix one mode permanently.
 
 ## Filename prompt
 
