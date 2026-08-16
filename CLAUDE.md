@@ -35,7 +35,7 @@ SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
 Threshold = 65               # default B/W threshold in percent; override with -t
 BlankInkPercent = 0.1        # pages below this ink coverage are flagged as blank
-OverviewMode = 'auto'        # default for --overview: auto|graphics|window|text|off
+OverviewMode = 'text'        # default for --overview: auto|graphics|window|text|off
 ```
 
 Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
@@ -77,20 +77,30 @@ Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
 
 When no `-o` is given, an interactive filename prompt appears before scanning. It offers live autocomplete (substring match) from existing PDFs in the current directory and live validation (existing filenames and invalid names are rejected). Requires `python-prompt_toolkit`; falls back to readline otherwise.
 
-After each page is scanned and optimized, the image is shown in a viewer and a **single keypress** (no Enter needed) is read. The prompt shows ink coverage, current threshold and rotation:
+After each page is scanned and optimized, the page is drawn **in the terminal** — in single- and multi-page mode alike — and a **single keypress** (no Enter needed) is read. The image viewer is not opened automatically; `v` opens it when a closer look is needed. The prompt shows ink coverage, current threshold and rotation:
 
 ```
+  ┌──────────────────────────────┐
+  │            Page 3/5          │
+  ├──────────────────────────────┤
+  │        (page thumbnail)      │
+  └──────────────────────────────┘
 Page 3/5 [12.4% ink, thr 65%, rot 90]
-[Enter] keep  [n] rescan  [r] rotate  [t] threshold  [d] drop  [b] back  [q] done:
+[Enter] keep  [v] view  [n] rescan  [r] rotate  [t] threshold  [d] drop  [b] back  [q] done:
 ```
 
 - **Enter** — keep page (in multi-page mode: move to next page / scan a new one)
+- **v** — open the full-size page in the image viewer; it stays open, so rotating while looking at it works
 - **r** — rotate 90° clockwise; repeat as needed
 - **t** — change the B/W threshold for this page and re-render
 - **n** — rescan this page into the same slot
 - **d** — drop this page (multi-page only)
 - **b** — go back to the previous page to fix it (multi-page only, from page 2 on)
 - **q** — abort (single-page) or keep this page and proceed to OCR (multi-page)
+
+Thumbnails are **fitted and letterboxed, never stretched** (`-resize` + `-extent`, not `-resize …!`). That is the whole point of the preview: a rotated page shows up as a landscape band, and distortion is visible instead of being normalised away. A half-block cell holds 1×2 pixels and displays roughly square, so the pixel grid is `cols × rows*2` — which is why the overview tile is 26×18 for A4 (26/36 ≈ 0.72 ≈ 210/297) rather than 26×14.
+
+With `--overview off` there is no terminal preview, so the viewer opens automatically as it did before.
 
 Pages whose ink coverage falls below `BlankInkPercent` are flagged with a blank-page warning before the prompt.
 

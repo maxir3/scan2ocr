@@ -90,7 +90,9 @@ Three ways to draw it, selected with `--overview` (default: the `OverviewMode` c
 | `window` | Real thumbnails as a contact sheet in the image viewer | an image viewer (`feh` etc.) — works in **any** terminal, including Alacritty |
 | `text` | The character grid above | nothing |
 
-`auto` tries them in order: `graphics` → `window` → `text`. In ghostty or foot you therefore get thumbnails inside the terminal; in Alacritty, which supports neither graphics protocol, you get the contact sheet in the image viewer. Use `--overview text` if you would rather stay inside the terminal, or set `OverviewMode` at the top of the script to fix one mode permanently.
+The default is `text`, so everything stays inside the terminal. `--overview auto` tries `graphics` → `window` → `text` instead, which gives you inline images in ghostty or foot. `OverviewMode` at the top of the script sets the default permanently.
+
+`--overview off` disables the terminal preview entirely; the image viewer then opens automatically for each page, as it did before.
 
 ## Filename prompt
 
@@ -100,14 +102,15 @@ With `--llm`, an additional rename prompt appears after OCR with a suggestion fr
 
 ## Interactive scan flow
 
-After each page is scanned, the image is shown in a viewer and a **single keypress** decides what happens — no Enter required. The prompt shows ink coverage, threshold and rotation:
+After each page is scanned, it is drawn **in the terminal** — single- and multi-page alike — and a **single keypress** decides what happens, no Enter required. No image viewer opens unless you ask for it with `v`. The prompt shows ink coverage, threshold and rotation:
 
 ```
 Page 3/5 [12.4% ink, thr 65%, rot 90]
-[Enter] keep  [n] rescan  [r] rotate  [t] threshold  [d] drop  [b] back  [q] done:
+[Enter] keep  [v] view  [n] rescan  [r] rotate  [t] threshold  [d] drop  [b] back  [q] done:
 ```
 
 - **Enter** — keep page (multi-page: go to the next one)
+- **v** — open the full-size page in the image viewer (stays open while you rotate)
 - **r** — rotate 90° clockwise; repeat as needed
 - **t** — change the B/W threshold for this page and re-render it
 - **n** — rescan this page
@@ -116,6 +119,8 @@ Page 3/5 [12.4% ink, thr 65%, rot 90]
 - **q** — abort (single-page) or keep this page and finish (multi-page)
 
 Nearly empty pages are flagged with a blank-page warning, which makes discarding scanned backsides easy.
+
+Thumbnails are fitted, never stretched, so a rotated page appears as a landscape band and a distorted scan looks distorted. That is what the preview is for — checking orientation at a glance, not reading the document.
 
 The raw scan is kept untouched and every preview is re-rendered from it, so rotation and threshold can be changed in any order and any number of times without quality loss.
 

@@ -12,8 +12,8 @@ OllamaModel='mistral'	# Local ollama model for filename suggestions; set to '' t
 Threshold=65			# Default black/white threshold in percent
 BlankInkPercent=0.1		# Pages with less ink than this are flagged as blank
 OverviewThumbWidth=26	# Width of one page thumbnail in the text overview
-OverviewThumbHeight=14	# Height of one page thumbnail in the text overview
-OverviewMode='auto'		# auto | graphics | window | text | off (see --overview)
+OverviewThumbHeight=18	# Height of one page thumbnail (26x18 keeps A4 proportions)
+OverviewMode='text'		# auto | graphics | window | text | off (see --overview)
 
 import argparse
 from subprocess import Popen, PIPE, STDOUT, DEVNULL
@@ -425,14 +425,19 @@ def page_status(page):
 	return '%.1f%% ink' % page.ink
 
 
-# Renders one page as a block of text. Ink is amplified before downscaling,
-# otherwise thin strokes average away against the white paper and the
-# thumbnail comes out empty.
+# Renders one page as a block of text. Two things matter here:
+# the page is fitted and letterboxed rather than stretched, so orientation and
+# distortion stay readable (a half-block cell holds 1x2 pixels and displays
+# roughly square, so the pixel grid is cols x rows*2); and ink is amplified
+# before downscaling, otherwise thin strokes average away against the white
+# paper and the thumbnail comes out empty.
 def thumbnail_lines(path, cols, rows):
 	blank = [' ' * cols] * rows
 
 	p = Popen(['magick', path, '-colorspace', 'Gray',
-	           '-resize', '%dx%d!' % (cols, rows * 2),
+	           '-resize', '%dx%d' % (cols, rows * 2),
+	           '-background', 'white', '-gravity', 'center',
+	           '-extent', '%dx%d' % (cols, rows * 2),
 	           '-negate', '-evaluate', 'multiply', '3', '-negate',
 	           '-depth', '8', 'pgm:-'], stdout=PIPE, stderr=PIPE)
 	data, _ = p.communicate()
@@ -472,6 +477,31 @@ def thumbnail_lines(path, cols, rows):
 			for x in range(min(width, cols))))
 	lines = [line.ljust(cols)[:cols] for line in lines[:rows]]
 	return lines + [' ' * cols] * (rows - len(lines))
+
+
+# Size of the single-page preview, as large as the terminal comfortably allows.
+# The box is square-ish so a rotated page is immediately obvious: it fills the
+# width instead of the height.
+def preview_box_size():
+	size = shutil.get_terminal_size((80, 24))
+	rows = max(10, min(26, size.lines - 12))
+	cols = max(20, min(size.columns - 6, rows * 2))
+	return (cols, rows)
+
+
+# The scanned page drawn straight into the terminal. This replaces the image
+# viewer as the default; [v] opens the real thing when a closer look is needed.
+def render_page_preview(page, title):
+	cols, rows = preview_box_size()
+	lines = thumbnail_lines(page.preview, cols, rows)
+
+	print()
+	print('  ┌' + '─' * cols + '┐')
+	print('  │' + title.center(cols) + '│')
+	print('  ├' + '─' * cols + '┤')
+	for line in lines:
+		print('  │' + line + '│')
+	print('  └' + '─' * cols + '┘')
 
 
 # Character grid: page thumbnails in boxes, labels stay real text.
@@ -883,22 +913,30 @@ def scan_with_retry(page, args, label):
 # applied in place; every other key ends the review.
 # Returns 'keep', 'rescan', 'drop', 'back', 'done' or 'abort'.
 def review_page(page, args, label, multi, can_go_back=False, pages=None):
+	in_terminal = args.overview != 'off'
 	dirty = True
+	redraw = True
 	viewer = None
-	want_viewer = True
+	# The terminal preview is the default; the viewer only opens on [v].
+	# With --overview off there is nothing to look at, so it opens as before.
+	want_viewer = not in_terminal
 	try:
 		while True:
 			if dirty:
 				close_viewer(viewer)
 				viewer = None
-				want_viewer = True
 				print('Optimization: \t', end='', flush=True)
 				build_preview(page, args)
 				print('Done.')
 				page.ink = ink_coverage(page.preview)
 				dirty = False
+				redraw = True
 				if page.ink is not None and page.ink < BlankInkPercent:
 					print('Warning: %s looks blank (%.2f%% ink).' % (label, page.ink))
+
+			if redraw and in_terminal:
+				render_page_preview(page, label)
+			redraw = False
 
 			if viewer is None and want_viewer:
 				viewer = show_image(page.preview)
@@ -912,7 +950,10 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 				bits.append('rot %d' % page.rotation)
 			status = label + (' [' + ', '.join(bits) + ']' if bits else '')
 
-			keys = '[Enter] keep  [n] rescan  [r] rotate'
+			keys = '[Enter] keep'
+			if in_terminal:
+				keys += '  [v] view'
+			keys += '  [n] rescan  [r] rotate'
 			if not args.color:
 				keys += '  [t] threshold'
 			if multi:
@@ -927,7 +968,11 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 
 			answer = read_key(status + '\n' + keys + ': ')
 
-			if answer == 'r':
+			if answer == 'v' and in_terminal:
+				# Open the full-size page and keep it open, so rotating while
+				# looking at it still works.
+				want_viewer = True
+			elif answer == 'r':
 				page.rotation = (page.rotation + 90) % 360
 				dirty = True
 			elif answer == 't' and not args.color:
@@ -937,7 +982,7 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 				if new_threshold != page.threshold:
 					page.threshold = new_threshold
 					dirty = True
-			elif answer == 'o' and multi and pages and args.overview != 'off':
+			elif answer == 'o' and multi and pages and in_terminal:
 				# Close the single-page viewer and leave it closed: reopening it
 				# would pop right back over the overview the user asked for.
 				close_viewer(viewer)
@@ -947,7 +992,7 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 				if handle is not None:
 					read_key('[Enter] back to this page: ')
 					close_overview(handle)
-				want_viewer = True	# bring the page back once the user is done
+				redraw = True	# draw this page again for context
 			elif answer == 'b' and multi and can_go_back:
 				return 'back'
 			elif answer == 'n':
