@@ -32,7 +32,11 @@ TempFormat = 'pnm'           # intermediate image format
 SaveFormatScanOnly = 'pdf'
 SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
+Threshold = 65               # default B/W threshold in percent; override with -t
+BlankInkPercent = 0.1        # pages below this ink coverage are flagged as blank
 ```
+
+Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
 
 ## Usage
 
@@ -52,27 +56,50 @@ OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
 
 # With LLM filename suggestion after OCR (requires ollama)
 ./scan2file --llm
+
+# Custom B/W threshold, straighten skewed pages, crop borders
+./scan2file -t 55
+./scan2file --deskew          # ~4s extra per page
+./scan2file --trim            # aggressive: removes all white margin
+
+# Keep intermediate files for debugging
+./scan2file --keep-temp
 ```
 
 ## Interactive scan flow
 
-When no `-o` is given, an interactive filename prompt appears before scanning. It offers live autocomplete (substring match) from existing PDFs in the current directory and live validation (existing filenames are rejected). Requires `python-prompt_toolkit`; falls back to readline otherwise.
+When no `-o` is given, an interactive filename prompt appears before scanning. It offers live autocomplete (substring match) from existing PDFs in the current directory and live validation (existing filenames and invalid names are rejected). Requires `python-prompt_toolkit`; falls back to readline otherwise.
 
-After each page is scanned and optimized, the image is shown in a viewer and the user is prompted:
-- **Enter** — keep page (in multi-page mode: scan next page)
-- **r** — rotate 90° clockwise in-place (`magick mogrify`), reopen viewer; repeat as needed
-- **n** — discard page, rescan
-- **q** — abort (single-page) or finish and proceed to OCR (multi-page)
+After each page is scanned and optimized, the image is shown in a viewer and a **single keypress** (no Enter needed) is read. The prompt shows ink coverage, current threshold and rotation:
 
-On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. Temp files are removed on exit via `atexit` regardless of how the script terminates. Output filename and size are printed on completion.
+```
+Page 3/5 [12.4% ink, thr 65%, rot 90]
+[Enter] keep  [n] rescan  [r] rotate  [t] threshold  [d] drop  [b] back  [q] done:
+```
+
+- **Enter** — keep page (in multi-page mode: move to next page / scan a new one)
+- **r** — rotate 90° clockwise; repeat as needed
+- **t** — change the B/W threshold for this page and re-render
+- **n** — rescan this page into the same slot
+- **d** — drop this page (multi-page only)
+- **b** — go back to the previous page to fix it (multi-page only, from page 2 on)
+- **q** — abort (single-page) or keep this page and proceed to OCR (multi-page)
+
+Pages whose ink coverage falls below `BlankInkPercent` are flagged with a blank-page warning before the prompt.
+
+The raw scan is never modified. Every preview is re-rendered from it with the pipeline `deskew → threshold → trim → rotate`, so rotation and threshold can be changed in any order without loss.
+
+On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. Temp files are removed on exit via `atexit` regardless of how the script terminates, unless `--keep-temp` is given. Output filename and size are printed on completion.
 
 ## Pipeline overview
 
 **scan2file (scanocr mode):**
-1. `scanimage` → `TempFile.pnm`
-2. `magick` with `-threshold 65%` → `TempFile.bw.pnm`
-3. `magick *.bw.pnm` → `TempFile.merged.pdf`
-4. `pdfsandwich -nopreproc -layout none -lang deu` → `Output.pdf`
+1. `scanimage` → `<prefix>_NNN.pnm` (raw, never modified)
+2. `magick` with optional `-deskew`, `-threshold 65%`, optional `-trim`, optional `-rotate` → `<prefix>_NNN.prep.pnm`
+3. `magick <all prep files>` → `<prefix>.merged.pdf`
+4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu` → `Output.pdf`
+
+Each page gets a unique, never-reused numeric id; page order lives in the page list, not in the filenames. Commands are built as argv lists, so paths with spaces work.
 
 **ocrscript:**
 1. Copy inputs to tmpdir
@@ -86,5 +113,8 @@ On scanner error (e.g. feeder empty), temp files are cleaned up and the user is 
 
 ## Known limitations / TODO
 
-- OCR-only mode (`-m ocr`) in scan2file is not implemented
+See `TODO` for the full list and deferred ideas.
+
+- OCR-only mode (`-m ocr`) in scan2file is not implemented (exits with status 1)
 - ADF (automatic document feeder) multi-page not supported
+- Configuration still lives in the script header, not in a config file

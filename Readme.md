@@ -27,6 +27,8 @@ TempFormat = 'pnm'            # intermediate image format
 SaveFormatScanOnly = 'pdf'
 SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'       # ollama model for --llm; set to '' to disable
+Threshold = 65                # default B/W threshold in percent; override with -t
+BlankInkPercent = 0.1         # pages below this ink coverage are flagged as blank
 ```
 
 # Usage
@@ -52,7 +54,11 @@ OllamaModel = 'mistral'       # ollama model for --llm; set to '' to disable
 -r 300        resolution in dpi (default: 300)
 -l ger        OCR language (default: ger → deu/German)
 -c            preserve colors (skip B/W optimization)
--p            show scan progress
+-t 65         B/W threshold in percent (default: 65)
+--deskew      straighten skewed pages (~4s extra per page)
+--trim        crop the border around the page content (aggressive)
+--no-progress hide scan progress
+--keep-temp   keep intermediate files for debugging
 ```
 
 ## Filename prompt
@@ -63,12 +69,24 @@ With `--llm`, an additional rename prompt appears after OCR with a suggestion fr
 
 ## Interactive scan flow
 
-After each page is scanned, the image is shown in a viewer:
+After each page is scanned, the image is shown in a viewer and a **single keypress** decides what happens — no Enter required. The prompt shows ink coverage, threshold and rotation:
 
-- **Enter** — keep page (multi-page: scan next)
-- **r** — rotate 90° clockwise, reopen viewer; repeat as needed
-- **n** — discard and rescan
-- **q** — abort (single-page) or finish and OCR (multi-page)
+```
+Page 3/5 [12.4% ink, thr 65%, rot 90]
+[Enter] keep  [n] rescan  [r] rotate  [t] threshold  [d] drop  [b] back  [q] done:
+```
+
+- **Enter** — keep page (multi-page: go to the next one)
+- **r** — rotate 90° clockwise; repeat as needed
+- **t** — change the B/W threshold for this page and re-render it
+- **n** — rescan this page
+- **d** — drop this page (multi-page only)
+- **b** — go back to the previous page to fix it (multi-page only)
+- **q** — abort (single-page) or keep this page and finish (multi-page)
+
+Nearly empty pages are flagged with a blank-page warning, which makes discarding scanned backsides easy.
+
+The raw scan is kept untouched and every preview is re-rendered from it, so rotation and threshold can be changed in any order and any number of times without quality loss.
 
 On scanner error (e.g. feeder empty), the user is prompted to insert a document and retry.
 
@@ -76,3 +94,4 @@ On scanner error (e.g. feeder empty), the user is prompted to insert a document 
 
 - OCR-only mode (`-m ocr`) not yet implemented
 - ADF (automatic document feeder) multi-page not supported
+- Configuration lives in the script header; see `TODO` for the config-file idea
