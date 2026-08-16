@@ -60,7 +60,7 @@ BlankInkPercent = 0.1         # pages below this ink coverage are flagged as bla
 --trim        crop the border around the page content (aggressive)
 --no-progress hide scan progress
 --keep-temp   keep intermediate files for debugging
---overview M  page overview: auto | graphics | text | off (default: auto)
+--overview M  page overview: auto | graphics | window | text | off
 ```
 
 ## Page overview
@@ -82,7 +82,15 @@ In multi-page mode, **o** shows all pages scanned so far, and the same overview 
 [Enter] continue  [e] edit pages  [q] abort
 ```
 
-With `chafa` installed **and** a terminal that speaks the kitty graphics protocol (ghostty) or sixel (foot), the overview is drawn as a real inline image instead — a labelled contact sheet built by `magick montage`. Alacritty supports neither protocol, so it gets the character grid above. Force either path with `--overview graphics` / `--overview text`.
+Three ways to draw it, selected with `--overview` (default: the `OverviewMode` config variable):
+
+| Mode | What you get | Requirement |
+|---|---|---|
+| `graphics` | Real thumbnails inline in the terminal | `chafa` **and** a terminal with the kitty graphics protocol (ghostty) or sixel (foot) |
+| `window` | Real thumbnails as a contact sheet in the image viewer | an image viewer (`feh` etc.) — works in **any** terminal, including Alacritty |
+| `text` | The character grid above | nothing |
+
+`auto` picks `graphics` when the terminal answers the capability probe, otherwise `text`. Alacritty supports neither graphics protocol, so use `--overview window` there — or set `OverviewMode = 'window'` at the top of the script to make it the default.
 
 ## Filename prompt
 

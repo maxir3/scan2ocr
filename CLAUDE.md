@@ -35,6 +35,7 @@ SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
 Threshold = 65               # default B/W threshold in percent; override with -t
 BlankInkPercent = 0.1        # pages below this ink coverage are flagged as blank
+OverviewMode = 'auto'        # default for --overview: auto|graphics|window|text|off
 ```
 
 Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
@@ -66,7 +67,8 @@ Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
 # Keep intermediate files for debugging
 ./scan2file --keep-temp
 
-# Page overview rendering (default: auto)
+# Page overview rendering (default: OverviewMode, shipped as auto)
+./scan2file -mu --overview window    # contact sheet in the image viewer
 ./scan2file -mu --overview text      # force the character grid
 ./scan2file -mu --overview off       # no overview at all
 ```
@@ -100,12 +102,20 @@ In multi-page mode, **o** shows all pages scanned so far, and the same overview 
 [Enter] continue  [e] edit pages  [q] abort
 ```
 
-`e` re-enters the page review starting at page 1. Two rendering paths, chosen by `--overview` (`auto` by default):
+`e` re-enters the page review starting at page 1. After **o**, the single-page viewer stays closed until the user dismisses the overview — otherwise it would pop straight back over it (`want_viewer` in `review_page`).
 
-- **graphics** — `magick montage` builds a labelled contact sheet, piped to `chafa`. Used when `chafa` is installed *and* the terminal answers the capability probe. Real, readable thumbnails.
+Three rendering paths, chosen by `--overview`, whose default is the `OverviewMode` config variable:
+
+- **graphics** — `magick montage` builds a labelled contact sheet, piped to `chafa`. Used when `chafa` is installed *and* the terminal answers the capability probe. Real thumbnails inside the terminal.
+- **window** — the same contact sheet, opened in the image viewer (`feh` etc.). Real thumbnails in *any* terminal, at the cost of a window. This is the option for Alacritty, which supports no graphics protocol.
 - **text** — a box grid drawn with `magick`-downscaled character thumbnails. Labels stay real text, which is why this is preferred over rasterizing the contact sheet when no graphics protocol is available.
 
 Protocol detection sends a kitty graphics query followed by a DA1 request in one round trip (`detect_graphics_protocol`); terminals that ignore the first still answer the second. `sixel` is recognised via DA1 attribute `4`. The result is cached for the process.
+
+Two traps worth remembering here:
+
+- **chafa cannot read PNM.** Its loaders are AVIF, GIF, HEIF, JPEG, JXL, PNG, QOI, SVG, TIFF, WebP, XWD — the page previews are PNM, so everything goes through `magick montage … png:-` first.
+- **Never hand magick a user-controlled output path.** It expands format specifiers in output *filenames*: `-o "Rabatt 50%"` produced `Rabatt 50%-0.pdf`. All magick writes go through `magick_write()`, which takes `<format>:-`, captures stdout and writes the file from Python.
 
 The raw scan is never modified. Every preview is re-rendered from it with the pipeline `deskew → threshold → trim → rotate`, so rotation and threshold can be changed in any order without loss.
 

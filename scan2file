@@ -13,6 +13,7 @@ Threshold=65			# Default black/white threshold in percent
 BlankInkPercent=0.1		# Pages with less ink than this are flagged as blank
 OverviewThumbWidth=26	# Width of one page thumbnail in the text overview
 OverviewThumbHeight=14	# Height of one page thumbnail in the text overview
+OverviewMode='auto'		# auto | graphics | window | text | off (see --overview)
 
 import argparse
 from subprocess import Popen, PIPE, STDOUT, DEVNULL
@@ -52,6 +53,25 @@ def _cleanup_temp_files():
 			pass
 
 atexit.register(_cleanup_temp_files)
+
+# Runs magick writing to stdout and stores the bytes ourselves. magick expands
+# format specifiers in *output filenames*, so "Rabatt 50%.pdf" would silently
+# become "Rabatt 50%-0.pdf". Never hand it a user-controlled output path.
+def magick_write(args, target):
+	p = Popen(['magick'] + args, stdout=PIPE, stderr=PIPE)
+	data, err = p.communicate()
+
+	if p.returncode != 0:
+		return (p.returncode, err.decode('utf-8', errors='replace').strip())
+	if not data:
+		return (1, 'magick produced no output')
+	try:
+		with open(target, 'wb') as out:
+			out.write(data)
+	except OSError as e:
+		return (1, str(e))
+	return (0, '')
+
 
 # Executes given command (argv list), returns (returncode, output as text).
 # Uses a list rather than a string so paths containing spaces stay intact.
@@ -375,8 +395,8 @@ def overview_backend(mode):
 
 	if mode == 'off':
 		return None
-	if mode == 'text':
-		return 'text'
+	if mode in ('text', 'window'):
+		return mode
 	if not shutil.which('chafa'):
 		return 'text'
 	if _graphics_protocol is False:
@@ -472,19 +492,45 @@ def overview_text(pages):
 	return True
 
 
+# Labelled contact sheet of all pages, written to stdout as PNG. It always
+# goes to stdout: magick expands '%' in *output filenames*, and the temp
+# prefix carries the user's output name.
+def montage_command(pages, tile=5):
+	cmd = ['magick', 'montage']
+	for i, page in enumerate(pages, 1):
+		cmd.extend(['-label', 'Page %d\\n%s' % (i, page_status(page)), page.preview])
+	cmd.extend(['-tile', '%dx' % min(len(pages), tile), '-geometry', '220x300+8+8',
+	            '-background', 'white', '-fill', 'black', '-pointsize', '13',
+	            '-bordercolor', 'gray50', '-border', '1',	# white page on white sheet
+	            'png:-'])
+	return cmd
+
+
+# Real thumbnails in any terminal: the contact sheet goes to the same image
+# viewer the page preview uses. Returns the viewer process, or None.
+def overview_window(pages):
+	if _temp_prefix is None:
+		return None
+	sheet = _temp_prefix + '.overview.png'
+
+	builder = Popen(montage_command(pages, tile=4), stdout=PIPE, stderr=DEVNULL)
+	data, _ = builder.communicate()
+	if builder.returncode != 0 or not data:
+		return None
+	try:
+		with open(sheet, 'wb') as out:
+			out.write(data)
+	except OSError:
+		return None
+	return show_image(sheet)
+
+
 # Real inline image: magick builds the labelled contact sheet, chafa draws it
 # with whichever graphics protocol the terminal answered with.
 def overview_graphics(pages, protocol):
 	size = shutil.get_terminal_size((80, 24))
-	tile = min(len(pages), 5)
 
-	montage = ['magick', 'montage']
-	for i, page in enumerate(pages, 1):
-		montage.extend(['-label', 'Page %d\\n%s' % (i, page_status(page)), page.preview])
-	montage.extend(['-tile', '%dx' % tile, '-geometry', '220x300+8+8',
-	                '-background', 'white', '-fill', 'black', '-pointsize', '13',
-	                'png:-'])
-
+	montage = montage_command(pages)
 	chafa = ['chafa', '--animate', 'off',
 	         '--size', '%dx%d' % (max(20, size.columns - 2), max(10, size.lines - 6)), '-']
 	if protocol != 'auto':
@@ -507,15 +553,29 @@ def overview_graphics(pages, protocol):
 	return True
 
 
+# Returns None if nothing was shown, a viewer process in window mode, or True
+# for the in-terminal paths. Pass the result to close_overview when done.
 def show_overview(pages, mode):
 	if not pages:
-		return False
+		return None
 	backend = overview_backend(mode)
 	if backend is None:
-		return False
+		return None
+
+	if backend == 'window':
+		viewer = overview_window(pages)
+		if viewer is not None:
+			return viewer
+		backend = 'text'	# no image viewer around, show it in the terminal
 	if backend == 'graphics' and overview_graphics(pages, _graphics_protocol):
 		return True
-	return overview_text(pages)
+
+	return True if overview_text(pages) else None
+
+
+def close_overview(handle):
+	if handle is not None and handle is not True:
+		close_viewer(handle)
 
 
 def ask_threshold(current):
@@ -612,10 +672,11 @@ parser.add_argument('--trim',
 					help='Crop uniform border around the page content (default: no)')
 parser.add_argument('--overview',
 					dest='overview',
-					choices=('auto', 'graphics', 'text', 'off'),
-					default='auto',
+					choices=('auto', 'graphics', 'window', 'text', 'off'),
+					default=OverviewMode,
 					help='Page overview: auto (inline image if the terminal can, '
-					     'else character grid), graphics, text or off (default: auto)')
+					     'else character grid), graphics, window (contact sheet in '
+					     'the image viewer), text or off (default: %s)' % OverviewMode)
 
 ## OCR Options ##
 
@@ -693,7 +754,7 @@ def scan(resolution, width, height, progress, target, color=False):
 
 # Renders the preview/output image from the untouched raw scan.
 def build_preview(page, args):
-	cmd = ['magick', page.raw]
+	cmd = [page.raw]
 	if args.deskew:
 		cmd.extend(['-deskew', '40%', '+repage'])
 	if not args.color:
@@ -702,9 +763,9 @@ def build_preview(page, args):
 		cmd.extend(['-fuzz', '10%', '-trim', '+repage'])
 	if page.rotation:
 		cmd.extend(['-rotate', str(page.rotation)])
-	cmd.append(page.preview)
+	cmd.append(TempFormat + ':-')
 
-	rc, err = run_cmd(cmd)
+	rc, err = magick_write(cmd, page.preview)
 	if rc != 0:
 		raise RuntimeError('magick failed on ' + page.raw + ': ' + err)
 
@@ -774,12 +835,15 @@ def ocr(save, language, merged_pdf, total_pages=1):
 def print_output_size(filepath):
 	try:
 		size = os.path.getsize(filepath)
-		if size >= 1024 * 1024:
-			print('Output: ' + filepath + ' (%.1f MB)' % (size / 1024 / 1024))
-		else:
-			print('Output: ' + filepath + ' (%.0f KB)' % (size / 1024))
-	except OSError:
-		pass
+	except OSError as e:
+		# Staying silent here once hid a real bug: magick had written the file
+		# under a different name than the one we asked for.
+		print('Warning: expected output is missing: ' + filepath + ' (' + str(e) + ')')
+		return
+	if size >= 1024 * 1024:
+		print('Output: ' + filepath + ' (%.1f MB)' % (size / 1024 / 1024))
+	else:
+		print('Output: ' + filepath + ' (%.0f KB)' % (size / 1024))
 
 
 # Returns True in case the output file already exists.
@@ -811,11 +875,13 @@ def scan_with_retry(page, args, label):
 def review_page(page, args, label, multi, can_go_back=False, pages=None):
 	dirty = True
 	viewer = None
+	want_viewer = True
 	try:
 		while True:
 			if dirty:
 				close_viewer(viewer)
 				viewer = None
+				want_viewer = True
 				print('Optimization: \t', end='', flush=True)
 				build_preview(page, args)
 				print('Done.')
@@ -824,7 +890,7 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 				if page.ink is not None and page.ink < BlankInkPercent:
 					print('Warning: %s looks blank (%.2f%% ink).' % (label, page.ink))
 
-			if viewer is None:
+			if viewer is None and want_viewer:
 				viewer = show_image(page.preview)
 
 			bits = []
@@ -862,9 +928,16 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 					page.threshold = new_threshold
 					dirty = True
 			elif answer == 'o' and multi and pages and args.overview != 'off':
+				# Close the single-page viewer and leave it closed: reopening it
+				# would pop right back over the overview the user asked for.
 				close_viewer(viewer)
 				viewer = None
-				show_overview(pages, args.overview)
+				want_viewer = False
+				handle = show_overview(pages, args.overview)
+				if handle is not None:
+					read_key('[Enter] back to this page: ')
+					close_overview(handle)
+				want_viewer = True	# bring the page back once the user is done
 			elif answer == 'b' and multi and can_go_back:
 				return 'back'
 			elif answer == 'n':
@@ -979,8 +1052,12 @@ def main():
 		print('Scanned %d page(s) in total.' % len(pages))
 
 		# Last chance to fix something before the expensive OCR run
-		while args.multi and len(pages) > 1 and show_overview(pages, args.overview):
+		while args.multi and pages:
+			handle = show_overview(pages, args.overview)
+			if handle is None:
+				break
 			answer = read_key('[Enter] continue  [e] edit pages  [q] abort: ')
+			close_overview(handle)
 			if answer == 'q':
 				sys.exit(1)
 			if answer != 'e':
@@ -995,7 +1072,7 @@ def main():
 		if args.mode == 'scanocr':
 			merged = _temp_prefix + '.merged.pdf'
 			print('Merging %d page(s) into PDF...' % len(pages), end='', flush=True)
-			rc, err = run_cmd(['magick'] + page_files + [merged])
+			rc, err = magick_write(page_files + ['pdf:-'], merged)
 			if rc != 0:
 				print(' Failed.')
 				sys.exit('Error: magick merge failed: ' + err)
@@ -1003,8 +1080,8 @@ def main():
 			ocr(save_file, args.language, merged, total_pages=len(pages))
 		elif args.mode == 'scan':
 			print('Writing %d page(s)...' % len(pages), end='', flush=True)
-			rc, err = run_cmd(['magick'] + page_files
-			                  + [save_file + '.' + SaveFormatScanOnly])
+			rc, err = magick_write(page_files + [SaveFormatScanOnly + ':-'],
+			                       save_file + '.' + SaveFormatScanOnly)
 			if rc != 0:
 				print(' Failed.')
 				sys.exit('Error: magick conversion failed: ' + err)
