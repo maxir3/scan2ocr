@@ -13,7 +13,7 @@ Threshold=65			# Default black/white threshold in percent
 BlankInkPercent=0.1		# Pages with less ink than this are flagged as blank
 OverviewThumbWidth=26	# Width of one page thumbnail in the text overview
 OverviewThumbHeight=18	# Height of one page thumbnail (26x18 keeps A4 proportions)
-OverviewMode='text'		# auto | graphics | window | text | off (see --overview)
+OverviewMode='auto'		# auto | graphics | window | text | off (see --overview)
 
 import argparse
 from subprocess import Popen, PIPE, STDOUT, DEVNULL
@@ -58,7 +58,7 @@ atexit.register(_cleanup_temp_files)
 # format specifiers in *output filenames*, so "Rabatt 50%.pdf" would silently
 # become "Rabatt 50%-0.pdf". Never hand it a user-controlled output path.
 def magick_write(args, target):
-	p = Popen(['magick'] + args, stdout=PIPE, stderr=PIPE)
+	p = Popen(['magick'] + args, stdin=DEVNULL, stdout=PIPE, stderr=PIPE)
 	data, err = p.communicate()
 
 	if p.returncode != 0:
@@ -290,11 +290,13 @@ def show_image(filepath):
 	viewer = find_image_viewer()
 	if viewer is None:
 		return None
+	# stdin is closed for the viewer too: it must not swallow keystrokes
+	# meant for the prompt behind it.
 	if viewer == 'feh':
-		return Popen(['feh', '--auto-zoom', '--scale-down', filepath])
+		return Popen(['feh', '--auto-zoom', '--scale-down', filepath], stdin=DEVNULL)
 	if viewer == 'display':
-		return Popen(['display', '-resize', '1200x1600>', filepath])
-	return Popen([viewer, filepath])
+		return Popen(['display', '-resize', '1200x1600>', filepath], stdin=DEVNULL)
+	return Popen([viewer, filepath], stdin=DEVNULL)
 
 def close_viewer(proc):
 	if proc is None:
@@ -310,8 +312,19 @@ def close_viewer(proc):
 # otherwise the lowercased character. Falls back to line input when stdin
 # is not a terminal (pipes, scripted runs).
 def read_key(message):
+	global _pending_input
+
 	sys.stdout.write(message)
 	sys.stdout.flush()
+
+	# Keys typed while the terminal was being probed come first
+	if _pending_input:
+		char, _pending_input = _pending_input[0], _pending_input[1:]
+		if char in ('\r', '\n'):
+			print()
+			return ''
+		print(char)
+		return char.lower()
 
 	if not sys.stdin.isatty():
 		line = sys.stdin.readline()
@@ -324,7 +337,7 @@ def read_key(message):
 	fd = sys.stdin.fileno()
 	old_settings = termios.tcgetattr(fd)
 	try:
-		tty.setraw(fd)
+		tty.setraw(fd, termios.TCSANOW)	# keep type-ahead, see above
 		char = sys.stdin.read(1)
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -345,12 +358,15 @@ def read_key(message):
 # Grayscale ramp, dark to light reversed: index 0 is white paper.
 _RAMP = ' .:-=+*#%@'
 _graphics_protocol = False	# False = not probed yet, None = none available
+_pending_input = ''			# keys typed while the terminal was being probed
 
 
 # Asks the terminal what it can draw. The kitty graphics query is followed by
 # a DA1 request: terminals that ignore the first still answer the second, so
 # one round trip covers both protocols.
 def detect_graphics_protocol():
+	global _pending_input
+
 	if not (sys.stdin.isatty() and sys.stdout.isatty()):
 		return None
 
@@ -363,7 +379,9 @@ def detect_graphics_protocol():
 
 	response = ''
 	try:
-		tty.setraw(fd)
+		# TCSANOW, not tty.setraw()'s default TCSAFLUSH: flushing would throw
+		# away anything the user has already typed ahead.
+		tty.setraw(fd, termios.TCSANOW)
 		sys.stdout.write(query)
 		sys.stdout.flush()
 		deadline = time.monotonic() + 0.5
@@ -377,15 +395,32 @@ def detect_graphics_protocol():
 			response += chunk
 			if response.endswith('c'):	# DA1 terminator, both answers are in
 				break
+
+		# Pick up anything that arrived late, so a stray tail of the reply is
+		# not read as the user's next keypress.
+		while select.select([fd], [], [], 0.05)[0]:
+			chunk = os.read(fd, 256)
+			if not chunk:
+				break
+			response += chunk.decode('latin-1')
 	except (OSError, ValueError):
 		return None
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-	if '_Gi=31;OK' in response:
-		return 'kitty'
+	kitty = '_Gi=31;OK' in response
 	m = re.search(r'\x1b\[\?([0-9;]*)c', response)
-	if m and '4' in m.group(1).split(';'):	# DA1 attribute 4 means sixel
+	sixel = bool(m) and '4' in m.group(1).split(';')	# DA1 attribute 4
+
+	# Whatever is not part of the two replies was typed by the user while we
+	# were asking. Keep it: discarding it would swallow their keystroke.
+	leftover = re.sub(r'\x1b_G[^\x1b]*\x1b\\', '', response)
+	leftover = re.sub(r'\x1b\[\?[0-9;]*c', '', leftover)
+	_pending_input += leftover
+
+	if kitty:
+		return 'kitty'
+	if sixel:
 		return 'sixels'
 	return None
 
@@ -439,7 +474,7 @@ def thumbnail_lines(path, cols, rows):
 	           '-background', 'white', '-gravity', 'center',
 	           '-extent', '%dx%d' % (cols, rows * 2),
 	           '-negate', '-evaluate', 'multiply', '3', '-negate',
-	           '-depth', '8', 'pgm:-'], stdout=PIPE, stderr=PIPE)
+	           '-depth', '8', 'pgm:-'], stdin=DEVNULL, stdout=PIPE, stderr=PIPE)
 	data, _ = p.communicate()
 	if p.returncode != 0:
 		return blank
@@ -489,9 +524,39 @@ def preview_box_size():
 	return (cols, rows)
 
 
+# One page as a real inline image, for terminals that can show pixels.
+# chafa has no PNM loader, so the page goes through magick as PNG first.
+def page_preview_graphics(page, title, protocol):
+	cols, rows = preview_box_size()
+
+	chafa = ['chafa', '--animate', 'off', '--size', '%dx%d' % (cols, rows), '-']
+	if protocol != 'auto':
+		chafa[1:1] = ['-f', protocol]
+
+	print()
+	print('  ' + title)
+	try:
+		builder = Popen(['magick', page.preview, 'png:-'],
+		                stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL)
+		viewer = Popen(chafa, stdin=builder.stdout)
+		builder.stdout.close()
+		viewer.wait()
+		builder.wait()
+	except OSError:
+		return False
+	if viewer.returncode != 0 or builder.returncode != 0:
+		return False
+	print()
+	return True
+
+
 # The scanned page drawn straight into the terminal. This replaces the image
 # viewer as the default; [v] opens the real thing when a closer look is needed.
-def render_page_preview(page, title):
+def render_page_preview(page, title, mode):
+	if (overview_backend(mode) == 'graphics'
+			and page_preview_graphics(page, title, _graphics_protocol)):
+		return
+
 	cols, rows = preview_box_size()
 	lines = thumbnail_lines(page.preview, cols, rows)
 
@@ -553,7 +618,7 @@ def overview_window(pages):
 		return None
 	sheet = _temp_prefix + '.overview.png'
 
-	builder = Popen(montage_command(pages, tile=4), stdout=PIPE, stderr=DEVNULL)
+	builder = Popen(montage_command(pages, tile=4), stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL)
 	data, _ = builder.communicate()
 	if builder.returncode != 0 or not data:
 		return None
@@ -580,7 +645,7 @@ def overview_graphics(pages, protocol):
 	# montage's stderr goes to DEVNULL on purpose: nobody reads it here, and a
 	# pipe nobody drains would deadlock montage once it fills up.
 	try:
-		builder = Popen(montage, stdout=PIPE, stderr=DEVNULL)
+		builder = Popen(montage, stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL)
 		viewer = Popen(chafa, stdin=builder.stdout)
 		builder.stdout.close()
 		viewer.wait()
@@ -595,6 +660,33 @@ def overview_graphics(pages, protocol):
 
 # Returns None if nothing was shown, a viewer process in window mode, or True
 # for the in-terminal paths. Pass the result to close_overview when done.
+# Answers "why do I get character art instead of images?" without guesswork.
+def report_terminal_capabilities(mode):
+	global _graphics_protocol
+
+	chafa = shutil.which('chafa')
+	print('Terminal:        TERM=%s, stdout is %s'
+	      % (os.environ.get('TERM', '?'),
+	         'a terminal' if sys.stdout.isatty() else 'not a terminal'))
+	print('chafa:           ' + (chafa or 'not installed'))
+
+	# Probe once and cache it, so the overview_backend() call below reuses it
+	if _graphics_protocol is False:
+		_graphics_protocol = detect_graphics_protocol()
+	protocol = _graphics_protocol
+	print('Graphics probe:  ' + (protocol or 'no answer (no kitty protocol, no sixel)'))
+	print('Image viewer:    ' + (find_image_viewer() or 'none found'))
+
+	backend = overview_backend(mode)
+	print('--overview %-6s selects: %s' % (mode, backend or 'nothing'))
+	if backend == 'graphics':
+		print('  -> pages and overview are drawn as real images in the terminal')
+	elif backend == 'window':
+		print('  -> overview opens as a contact sheet in the image viewer')
+	elif backend == 'text':
+		print('  -> pages and overview are drawn as character art')
+
+
 def show_overview(pages, mode):
 	if not pages:
 		return None
@@ -710,6 +802,11 @@ parser.add_argument('--trim',
 					action='store_true',
 					default=False,
 					help='Crop uniform border around the page content (default: no)')
+parser.add_argument('--probe-terminal',
+					dest='probe_terminal',
+					action='store_true',
+					default=False,
+					help='Report what this terminal can draw, then exit')
 parser.add_argument('--overview',
 					dest='overview',
 					choices=('auto', 'graphics', 'window', 'text', 'off'),
@@ -778,7 +875,7 @@ def scan(resolution, width, height, progress, target, color=False):
 	print('Scanning...')
 	try:
 		with open(target, 'wb') as out:
-			p = Popen(cmd, stdout=out, stderr=PIPE)
+			p = Popen(cmd, stdin=DEVNULL, stdout=out, stderr=PIPE)
 			_, stderr = p.communicate()
 		if p.returncode == 0:
 			print('Scan done.')
@@ -853,7 +950,7 @@ def ocr(save, language, merged_pdf, total_pages=1):
 	sys.stderr.write('OCRing...\n')
 	draw_progress_bar(0, total_pages)
 
-	p = Popen(cmd, stdout=PIPE, stderr=STDOUT, env=my_env)
+	p = Popen(cmd, stdin=DEVNULL, stdout=PIPE, stderr=STDOUT, env=my_env)
 
 	with p.stdout:
 		for raw_line in p.stdout:
@@ -935,7 +1032,7 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 					print('Warning: %s looks blank (%.2f%% ink).' % (label, page.ink))
 
 			if redraw and in_terminal:
-				render_page_preview(page, label)
+				render_page_preview(page, label, args.overview)
 			redraw = False
 
 			if viewer is None and want_viewer:
@@ -1051,6 +1148,10 @@ def main():
 		sys.exit('Threshold must be between 1 and 99.')
 	Threshold = args.threshold
 
+	if args.probe_terminal:
+		report_terminal_capabilities(args.overview)
+		sys.exit(0)
+
 	# Mode switcher
 	if args.mode == 'ocr':
 		sys.exit('OCR only mode is not yet implemented.')
@@ -1061,6 +1162,10 @@ def main():
 	print('Device: %s | %sdpi | %sx%smm | %s' % (
 		device, args.resolution, args.width, args.height,
 		' '.join(scan_options(args.color))))
+
+	# Ask the terminal what it can draw now, before the first prompt. Doing it
+	# mid-flow would send escape sequences while the user may already be typing.
+	overview_backend(args.overview)
 
 	work_dir = os.getcwd()
 	output_ext = SaveFormatOCR if args.mode == 'scanocr' else SaveFormatScanOnly

@@ -88,9 +88,20 @@ def run_pipe(args, keys, workdir, env, timeout=120):
 
 
 def run_pty(args, keys, workdir, env, timeout=120, da1=DA1_NO_GRAPHICS,
-            term='alacritty'):
+            term='alacritty', preload=False, burst_after=None,
+            burst_delay=0.5):
 	"""Drives scan2file inside a real pty. keys is a list of byte strings sent
-	one at a time whenever the script goes quiet."""
+	one at a time whenever the script goes quiet.
+
+	Two type-ahead variants, which exercise different code:
+
+	preload=True writes every key before the script draws anything. Those keys
+	are still in the buffer when the terminal capability probe runs, so they
+	end up in the script's own pending-input buffer.
+
+	burst_after=N sends N keys normally and then dumps the rest at once, so
+	they arrive while the script is busy scanning -- after the probe, before
+	the next prompt. This is the case that a terminal flush would swallow."""
 	master, slave = pty.openpty()
 	fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 44, 132, 0, 0))
 
@@ -103,6 +114,11 @@ def run_pty(args, keys, workdir, env, timeout=120, da1=DA1_NO_GRAPHICS,
 
 	out = b''
 	pending = list(keys)
+	if preload:
+		for key in pending:
+			os.write(master, key)
+		pending = []
+	sent = 0
 	deadline = time.time() + timeout
 	try:
 		while time.time() < deadline:
@@ -120,6 +136,14 @@ def run_pty(args, keys, workdir, env, timeout=120, da1=DA1_NO_GRAPHICS,
 				continue
 			if pending:
 				os.write(master, pending.pop(0))
+				sent += 1
+				if burst_after is not None and sent >= burst_after:
+					# Wait until the script has moved on and is busy scanning,
+					# so the keys land while nothing is reading them.
+					time.sleep(burst_delay)
+					for key in pending:
+						os.write(master, key)
+					pending = []
 				time.sleep(0.15)
 			elif proc.poll() is not None:
 				break

@@ -74,8 +74,10 @@ def pipe_scenarios(root, pages):
 	   ['-o', 'E', '-mu', '-m', 'scan'], ['', 'd', 'q', ''],
 	   expect=[r'Page dropped'])
 
+	# --overview text so the grid label is readable as text; with the default
+	# the overview may go to the image viewer instead.
 	go('blank page is flagged',
-	   ['-o', 'F', '-mu', '-m', 'scan'], ['q', ''],
+	   ['-o', 'F', '-mu', '-m', 'scan', '--overview', 'text'], ['q', ''],
 	   pages_dir=os.path.join(pages, 'blank'),
 	   expect=[r'looks blank', r'blank\?'])
 
@@ -206,10 +208,56 @@ def pty_scenarios(root, pages):
 		      expect=[r'opened %d time' % expected_opens])
 
 	print('\npty scenarios: terminal capability probe')
-	go('sixel terminal selects the graphics path',
-	   ['-o', 'S', '-mu', '-m', 'scan', '--overview', 'auto'],
-	   [b'\r', b'q', b'\r', b'\r'], da1=DA1_SIXEL, workname='sixel',
-	   expect=[r'Output:'], reject=[r'┌─+┐\s*\n\s*│\s+Page \d+\s+│'])
+
+	# A terminal that answers "sixel" must get real images, not character art,
+	# for the page previews as well as the overview.
+	work = os.path.join(root, 'pty_sixel')
+	os.makedirs(work, exist_ok=True)
+	env = make_env(work, pages)
+	text, _ = run_pty(['-o', 'S', '-mu', '-m', 'scan', '--overview', 'auto'],
+	                  [b'\r', b'q', b'\r', b'\r'], work, env,
+	                  da1=DA1_SIXEL, term='foot')
+	check('sixel terminal draws pages and overview as images',
+	      'sixel blocks: %d, character boxes: %d, %s'
+	      % (text.count('\x1bP'), text.count('┌'),
+	         'output written' if 'Output:' in text else 'NO OUTPUT'), 0,
+	      expect=[r'sixel blocks: [3-9]', r'character boxes: 0', r'output written'])
+
+	# --probe-terminal must report what it found rather than leaving the user
+	# guessing why they see character art.
+	for name, da1, expected in [
+		('probe reports sixel', DA1_SIXEL, r'Graphics probe:  sixels'),
+		('probe reports no graphics', None, r'Graphics probe:  no answer'),
+	]:
+		work = os.path.join(root, 'pty_' + re.sub(r'\W+', '_', name))
+		os.makedirs(work, exist_ok=True)
+		env = make_env(work, pages)
+		kwargs = {'da1': da1} if da1 else {}
+		text, code = run_pty(['--probe-terminal'], [], work, env, **kwargs)
+		check(name, text, code, expect=[expected], exit_code=0)
+
+	print('\npty scenarios: type-ahead')
+
+	# Keys pressed before the prompt appears must survive. tty.setraw()
+	# defaults to TCSAFLUSH, which throws them away.
+	work = os.path.join(root, 'pty_typeahead_start')
+	os.makedirs(work, exist_ok=True)
+	env = make_env(work, pages)
+	text, _ = run_pty(['-o', 'T', '-mu', '-m', 'scan'],
+	                  [b'\r', b'q', b'\r', b'\r'], work, env, preload=True)
+	check('keys typed before the script starts are not discarded', text, 0,
+	      expect=[r'Scanned 2 page', r'Output:'])
+
+	# Typed while page 2 is being scanned, i.e. after the probe. read_key()
+	# must not flush the terminal, or these vanish.
+	work = os.path.join(root, 'pty_typeahead_mid')
+	os.makedirs(work, exist_ok=True)
+	env = make_env(work, pages, extra={'FAKE_SCAN_DELAY': '2'})
+	text, _ = run_pty(['-o', 'U', '-mu', '-m', 'scan'],
+	                  [b'\r', b'q', b'\r', b'\r'], work, env, burst_after=1,
+	                  burst_delay=0.6, timeout=45)
+	check('keys typed while a page is scanning are not discarded', text, 0,
+	      expect=[r'Scanned 2 page', r'Output:'])
 
 
 # --------------------------------------------------------------------------
@@ -271,6 +319,10 @@ def main():
 	cache = os.path.join(tempfile.gettempdir(), 'scan2file-testpages')
 	pages = build_pages(cache)
 
+	# Only count temp files this run creates; a killed earlier run may have
+	# left some behind, and that is not what this suite is asserting.
+	before = set(glob.glob('/tmp/scanner_*'))
+
 	root = tempfile.mkdtemp(prefix='scan2file-tests-')
 	try:
 		pipe_scenarios(root, pages)
@@ -279,7 +331,7 @@ def main():
 	finally:
 		shutil.rmtree(root, ignore_errors=True)
 
-	leftovers = glob.glob('/tmp/scanner_*')
+	leftovers = set(glob.glob('/tmp/scanner_*')) - before
 	check('no temporary files left behind',
 	      'leftovers: %d' % len(leftovers), 0, expect=[r'leftovers: 0'])
 

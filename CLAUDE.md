@@ -35,7 +35,7 @@ SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
 Threshold = 65               # default B/W threshold in percent; override with -t
 BlankInkPercent = 0.1        # pages below this ink coverage are flagged as blank
-OverviewMode = 'text'        # default for --overview: auto|graphics|window|text|off
+OverviewMode = 'auto'        # default for --overview: auto|graphics|window|text|off
 ```
 
 Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
@@ -101,6 +101,17 @@ Page 3/5 [12.4% ink, thr 65%, rot 90]
 Thumbnails are **fitted and letterboxed, never stretched** (`-resize` + `-extent`, not `-resize …!`). That is the whole point of the preview: a rotated page shows up as a landscape band, and distortion is visible instead of being normalised away. A half-block cell holds 1×2 pixels and displays roughly square, so the pixel grid is `cols × rows*2` — which is why the overview tile is 26×18 for A4 (26/36 ≈ 0.72 ≈ 210/297) rather than 26×14.
 
 With `--overview off` there is no terminal preview, so the viewer opens automatically as it did before.
+
+In a terminal that answers the capability probe (sixel in foot, the kitty protocol in ghostty), the per-page preview is drawn as a **real image** too, not just the overview — `page_preview_graphics()`. chafa has no PNM loader, so the page goes through `magick … png:-` first.
+
+`--probe-terminal` reports what was detected and which backend that selects, then exits. Use it instead of guessing why a terminal shows character art.
+
+Two terminal-handling rules that were learned the hard way:
+
+- **`tty.setraw(fd)` defaults to `TCSAFLUSH`, which discards type-ahead.** Both raw-mode switches pass `TCSANOW` instead, or a key pressed while a page is still being scanned is silently lost.
+- **Child processes get `stdin=DEVNULL`.** `magick`, `scanimage`, `pdfsandwich` and the image viewer would otherwise inherit the terminal and could eat keystrokes meant for the prompt.
+
+Keys that arrive during the capability probe are not thrown away either: whatever is not part of the two expected replies is kept in `_pending_input` and served by the next `read_key()`.
 
 Pages whose ink coverage falls below `BlankInkPercent` are flagged with a blank-page warning before the prompt.
 

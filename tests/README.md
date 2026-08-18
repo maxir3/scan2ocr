@@ -52,3 +52,14 @@ Append a `go(...)` call in `pipe_scenarios` or `pty_scenarios`. `expect` and
 `reject` take regular expressions matched against the combined output;
 `exit_code` checks the status. Keep the name a sentence describing the
 guarantee, since that is what a failure prints.
+
+## Type-ahead
+
+Two scenarios, because they hit different code. `preload=True` writes keys
+before the script draws anything — those are still in the buffer when the
+capability probe runs, so they end up in the script's own pending-input
+buffer. `burst_after=N` sends N keys normally, waits, then dumps the rest
+while the scanner stub is deliberately slow (`FAKE_SCAN_DELAY`), so they
+arrive when nothing is reading them. Only the second one fails if
+`read_key()` goes back to `tty.setraw()`'s default `TCSAFLUSH`; the first
+passes either way, because the probe already collected the keys.

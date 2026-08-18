@@ -30,7 +30,7 @@ SaveFormatOCR = 'pdf'
 OllamaModel = 'mistral'       # ollama model for --llm; set to '' to disable
 Threshold = 65                # default B/W threshold in percent; override with -t
 BlankInkPercent = 0.1         # pages below this ink coverage are flagged as blank
-OverviewMode = 'text'         # default for --overview: auto|graphics|window|text|off
+OverviewMode = 'auto'         # default for --overview: auto|graphics|window|text|off
 ```
 
 # Usage
@@ -62,6 +62,7 @@ OverviewMode = 'text'         # default for --overview: auto|graphics|window|tex
 --no-progress hide scan progress
 --keep-temp   keep intermediate files for debugging
 --overview M  page overview: auto | graphics | window | text | off
+--probe-terminal  report what this terminal can draw, then exit
 ```
 
 ## Page overview
@@ -91,7 +92,13 @@ Three ways to draw it, selected with `--overview` (default: the `OverviewMode` c
 | `window` | Real thumbnails as a contact sheet in the image viewer | an image viewer (`feh` etc.) — works in **any** terminal, including Alacritty |
 | `text` | The character grid above | nothing |
 
-The default is `text`, so everything stays inside the terminal. `--overview auto` tries `graphics` → `window` → `text` instead, which gives you inline images in ghostty or foot. `OverviewMode` at the top of the script sets the default permanently.
+The default is `auto`, which tries `graphics` → `window` → `text`. In **foot** (sixel) or **ghostty** (kitty protocol) you get real images inside the terminal — for the per-page preview as well as the overview. In a terminal that supports neither, the overview falls back to the image viewer and the page preview to character art. `--overview text` keeps everything as character art; `OverviewMode` at the top of the script sets the default permanently.
+
+Not sure what your terminal can do?
+
+```bash
+./scan2file --probe-terminal
+```
 
 `--overview off` disables the terminal preview entirely; the image viewer then opens automatically for each page, as it did before.
 
