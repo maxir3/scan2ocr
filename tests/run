@@ -200,7 +200,9 @@ def pty_scenarios(root, pages):
 		os.makedirs(work, exist_ok=True)
 		log = os.path.join(work, 'feh.log')
 		env = make_env(work, pages, feh_log=log)
-		run_pty(['-o', 'V'] + args, keys, work, env)
+		# key_delay: give the viewer stub time to start and write its log
+		# before the script terminates it again
+		run_pty(['-o', 'V'] + args, keys, work, env, key_delay=0.8)
 		opens = 0
 		if os.path.exists(log):
 			opens = sum(1 for line in open(log) if 'feh opened' in line)

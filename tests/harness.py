@@ -89,7 +89,7 @@ def run_pipe(args, keys, workdir, env, timeout=120):
 
 def run_pty(args, keys, workdir, env, timeout=120, da1=DA1_NO_GRAPHICS,
             term='alacritty', preload=False, burst_after=None,
-            burst_delay=0.5):
+            burst_delay=0.5, key_delay=0.0):
 	"""Drives scan2file inside a real pty. keys is a list of byte strings sent
 	one at a time whenever the script goes quiet.
 
@@ -101,7 +101,11 @@ def run_pty(args, keys, workdir, env, timeout=120, da1=DA1_NO_GRAPHICS,
 
 	burst_after=N sends N keys normally and then dumps the rest at once, so
 	they arrive while the script is busy scanning -- after the probe, before
-	the next prompt. This is the case that a terminal flush would swallow."""
+	the next prompt. This is the case that a terminal flush would swallow.
+
+	key_delay pauses before each key. Scenarios that assert a stub subprocess
+	got as far as writing its log need it: otherwise the script may terminate
+	the stub before the shell in it has run a single line."""
 	master, slave = pty.openpty()
 	fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 44, 132, 0, 0))
 
@@ -135,6 +139,8 @@ def run_pty(args, keys, workdir, env, timeout=120, da1=DA1_NO_GRAPHICS,
 					os.write(master, da1)
 				continue
 			if pending:
+				if key_delay:
+					time.sleep(key_delay)
 				os.write(master, pending.pop(0))
 				sent += 1
 				if burst_after is not None and sent >= burst_after:
