@@ -1,0 +1,41 @@
+# TODO / Ideen
+
+## Konfiguration auslagern (zurückgestellt, Idee für später)
+
+Die Konfigurationsvariablen stehen im Kopf von `scan2file` (device,
+AdditionalScanOptions, SaveFormat*, TempFormat, OllamaModel, Threshold,
+BlankInkPercent). Wer sie anpasst, ändert das Skript selbst — damit
+kollidiert jedes `git pull` mit den lokalen Änderungen.
+
+Idee: Werte aus `~/.config/scan2file.conf` lesen (einfaches key=value oder
+INI via configparser), die Werte im Skriptkopf bleiben als Defaults stehen.
+Reihenfolge: Default < Konfigdatei < Kommandozeilenoption.
+Dann ist das Skript per git aktualisierbar, ohne die eigene Konfiguration
+zu verlieren.
+
+## Offen
+
+- OCR-only Modus (`-m ocr`) ist nicht implementiert. `ocrscript` baut dieselbe
+  Kette in Bash nach — naheliegend wäre, vorhandene Bilder/PDFs als Seiten
+  einzulesen und den Rest der scan2file-Pipeline unverändert zu nutzen.
+- ADF (Dokumenteneinzug) für Mehrseitenscans wird nicht unterstützt. Mit dem
+  Seitenmodell fast geschenkt: `scanimage --batch=<prefix>_%03d.pnm` scannt
+  den ganzen Einzug, danach `review_stack(pages, 0, args)` über alle Seiten.
+
+## Erledigt (2026-09-13)
+
+- PDFs waren A3 statt A4: PNM kennt keine DPI, magick nahm 72 an, pdfsandwich
+  deckelte die 34x48-Zoll-Seite auf A3. Jetzt `-density <resolution>` beim
+  Zusammenführen, dazu `-compress Group4` für S/W (rund 50x kleiner).
+- Temp-Dateien blieben liegen, wenn der Ausgabename `[` oder `*` enthielt
+  (Glob-Metazeichen im Aufräum-Muster). Jetzt eigenes Verzeichnis per
+  `tempfile.mkdtemp`, entfernt mit `shutil.rmtree`.
+- Scan-Auflösung geht als `-resolution` an pdfsandwich, statt dass es
+  intern mit 300 dpi rastert.
+- `[v]` ohne Bildbetrachter meldet das jetzt.
+- Leerseitenerkennung im Farbmodus misst auf einer geschwellten Kopie.
+- Pfeil- und Funktionstasten werden in `read_key` als ganze ESC-Sequenz
+  verschluckt statt als drei Einzeltasten verarbeitet.
+- Aufgeräumt: Threshold als Parameter an `Page`, `pipe_to_chafa()` für beide
+  chafa-Aufrufe, `-p/--progress/--no-progress` per BooleanOptionalAction,
+  `ocr()` nennt bei Fehler den Exit-Code, `output_file_exists` in snake_case.
