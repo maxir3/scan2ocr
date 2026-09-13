@@ -318,6 +318,7 @@ def read_key(message):
 	sys.stdout.flush()
 
 	# Keys typed while the terminal was being probed come first
+	_pending_input = _ESCAPE_SEQ.sub('', _pending_input)
 	if _pending_input:
 		char, _pending_input = _pending_input[0], _pending_input[1:]
 		if char in ('\r', '\n'):
@@ -338,7 +339,16 @@ def read_key(message):
 	old_settings = termios.tcgetattr(fd)
 	try:
 		tty.setraw(fd, termios.TCSANOW)	# keep type-ahead, see above
-		char = sys.stdin.read(1)
+		while True:
+			char = sys.stdin.read(1)
+			if char != '\x1b':
+				break
+			# An arrow or function key arrives as ESC plus a few more bytes.
+			# Read as separate keys, they would redraw the prompt once each,
+			# so the whole sequence is drained and ignored.
+			while select.select([fd], [], [], 0.05)[0]:
+				if not os.read(fd, 64):
+					break
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
@@ -359,6 +369,8 @@ def read_key(message):
 _RAMP = ' .:-=+*#%@'
 _graphics_protocol = False	# False = not probed yet, None = none available
 _pending_input = ''			# keys typed while the terminal was being probed
+# CSI and SS3 sequences (arrow keys, function keys, mouse reports)
+_ESCAPE_SEQ = re.compile(r'\x1b(?:\[[0-9;?<]*[ -/]*[@-~]|O[@-~]|[@-Z\\-_])')
 
 
 # Asks the terminal what it can draw. The kitty graphics query is followed by
@@ -524,27 +536,33 @@ def preview_box_size():
 	return (cols, rows)
 
 
-# One page as a real inline image, for terminals that can show pixels.
-# chafa has no PNM loader, so the page goes through magick as PNG first.
-def page_preview_graphics(page, title, protocol):
-	cols, rows = preview_box_size()
-
+# Pipes the PNG that builder_cmd writes to stdout into chafa, which draws
+# it with the graphics protocol the terminal answered with. Returns False
+# if either side failed, so the caller can fall back to character art.
+# builder's stderr goes to DEVNULL on purpose: nobody reads it here, and a
+# pipe nobody drains would deadlock the builder once it fills up.
+def pipe_to_chafa(builder_cmd, cols, rows, protocol):
 	chafa = ['chafa', '--animate', 'off', '--size', '%dx%d' % (cols, rows), '-']
 	if protocol != 'auto':
 		chafa[1:1] = ['-f', protocol]
-
-	print()
-	print('  ' + title)
 	try:
-		builder = Popen(['magick', page.preview, 'png:-'],
-		                stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL)
+		builder = Popen(builder_cmd, stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL)
 		viewer = Popen(chafa, stdin=builder.stdout)
 		builder.stdout.close()
 		viewer.wait()
 		builder.wait()
 	except OSError:
 		return False
-	if viewer.returncode != 0 or builder.returncode != 0:
+	return viewer.returncode == 0 and builder.returncode == 0
+
+
+# One page as a real inline image, for terminals that can show pixels.
+# chafa has no PNM loader, so the page goes through magick as PNG first.
+def page_preview_graphics(page, title, protocol):
+	cols, rows = preview_box_size()
+	print()
+	print('  ' + title)
+	if not pipe_to_chafa(['magick', page.preview, 'png:-'], cols, rows, protocol):
 		return False
 	print()
 	return True
@@ -634,25 +652,9 @@ def overview_window(pages):
 # with whichever graphics protocol the terminal answered with.
 def overview_graphics(pages, protocol):
 	size = shutil.get_terminal_size((80, 24))
-
-	montage = montage_command(pages)
-	chafa = ['chafa', '--animate', 'off',
-	         '--size', '%dx%d' % (max(20, size.columns - 2), max(10, size.lines - 6)), '-']
-	if protocol != 'auto':
-		chafa[1:1] = ['-f', protocol]
-
 	print()
-	# montage's stderr goes to DEVNULL on purpose: nobody reads it here, and a
-	# pipe nobody drains would deadlock montage once it fills up.
-	try:
-		builder = Popen(montage, stdin=DEVNULL, stdout=PIPE, stderr=DEVNULL)
-		viewer = Popen(chafa, stdin=builder.stdout)
-		builder.stdout.close()
-		viewer.wait()
-		builder.wait()
-	except OSError:
-		return False
-	if viewer.returncode != 0 or builder.returncode != 0:
+	if not pipe_to_chafa(montage_command(pages),
+	                     max(20, size.columns - 2), max(10, size.lines - 6), protocol):
 		return False
 	print()
 	return True
@@ -770,13 +772,9 @@ parser.add_argument('-sw',
 parser.add_argument('-p',
 					'--progress',
 					dest='progress',
-					action='store_true',
+					action=argparse.BooleanOptionalAction,
 					default=True,
-					help='Show scan progress (default: yes)')
-parser.add_argument('--no-progress',
-					dest='progress',
-					action='store_false',
-					help='Do not show scan progress')
+					help='Show scan progress')
 
 ## Converting Options ##
 
@@ -838,12 +836,12 @@ parser.add_argument('-l',
 # One scanned sheet. The raw scan is never modified; every preview is
 # re-rendered from it, so rotation and threshold can be changed at will.
 class Page:
-	def __init__(self, page_id, prefix):
+	def __init__(self, page_id, prefix, threshold):
 		self.id = page_id
 		self.raw = '%s_%03d.%s' % (prefix, page_id, TempFormat)
 		self.preview = '%s_%03d.prep.%s' % (prefix, page_id, TempFormat)
 		self.rotation = 0
-		self.threshold = Threshold
+		self.threshold = threshold
 		self.ink = None
 
 	def remove_files(self):
@@ -909,9 +907,13 @@ def build_preview(page, args):
 
 # Fraction of dark pixels in percent. Measured on a downscaled copy
 # (same result, roughly 4x faster) and despeckled to ignore scanner noise.
-def ink_coverage(path):
-	rc, out = run_cmd(['magick', path, '-resize', '400x', '-despeckle',
-	                   '-colorspace', 'Gray', '-format', '%[fx:100*(1-mean)]', 'info:'])
+# A colour page is thresholded first: paper is never pure white, and the
+# grey of an empty sheet alone would be far above BlankInkPercent.
+def ink_coverage(path, threshold=None):
+	cmd = ['magick', path, '-resize', '400x', '-despeckle', '-colorspace', 'Gray']
+	if threshold is not None:
+		cmd.extend(['-threshold', '%d%%' % threshold])
+	rc, out = run_cmd(cmd + ['-format', '%[fx:100*(1-mean)]', 'info:'])
 	if rc != 0:
 		return None
 	try:
@@ -931,15 +933,17 @@ def draw_progress_bar(done, total, width=40):
 	sys.stderr.flush()
 
 # Do ocr on the merged pdf
-def ocr(save, language, merged_pdf, total_pages=1):
+def ocr(save, language, merged_pdf, resolution, total_pages=1):
 	my_env = os.environ.copy()
 	my_env["MALLOC_CHECK_"] = '0'
 
 	if language == 'ger':
 		language = 'deu'
 
+	# -resolution: pdfsandwich would otherwise rasterize at its own default
+	# of 300 dpi, and a 600 dpi scan would be downsampled before OCR.
 	cmd = ['stdbuf', '-oL', 'pdfsandwich', '-nopreproc', '-layout', 'none',
-	       '-nthreads', '1', '-lang', language,
+	       '-nthreads', '1', '-lang', language, '-resolution', str(resolution),
 	       '-o', save + '.' + SaveFormatOCR, merged_pdf]
 
 	# "Processing page N." appears just before tesseract starts on page N,
@@ -967,7 +971,8 @@ def ocr(save, language, merged_pdf, total_pages=1):
 	sys.stderr.write('\n')
 
 	if p.returncode != 0:
-		raise RuntimeError('\n'.join(other_lines))
+		raise RuntimeError('pdfsandwich failed (exit code %d)%s' % (
+			p.returncode, ('\n' + '\n'.join(other_lines)) if other_lines else ''))
 
 def print_output_size(filepath):
 	try:
@@ -984,7 +989,7 @@ def print_output_size(filepath):
 
 
 # Returns True in case the output file already exists.
-def OutputFileExists(save_file, mode):
+def output_file_exists(save_file, mode):
 	return (
 		(os.path.exists(save_file + '.' + SaveFormatOCR) and mode in ('scanocr', 'ocr'))
 		or (os.path.exists(save_file + '.' + SaveFormatScanOnly) and mode == 'scan')
@@ -1025,7 +1030,8 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 				print('Optimization: \t', end='', flush=True)
 				build_preview(page, args)
 				print('Done.')
-				page.ink = ink_coverage(page.preview)
+				page.ink = ink_coverage(page.preview,
+				                        threshold=page.threshold if args.color else None)
 				dirty = False
 				redraw = True
 				if page.ink is not None and page.ink < BlankInkPercent:
@@ -1068,6 +1074,8 @@ def review_page(page, args, label, multi, can_go_back=False, pages=None):
 			if answer == 'v' and in_terminal:
 				# Open the full-size page and keep it open, so rotating while
 				# looking at it still works.
+				if find_image_viewer() is None:
+					print('No image viewer found (feh, display, eog or xdg-open).')
 				want_viewer = True
 			elif answer == 'r':
 				page.rotation = (page.rotation + 90) % 360
@@ -1141,12 +1149,11 @@ def review_stack(pages, start_index, args):
 def main():
 	args = parser.parse_args()
 
-	global _temp_dir, _temp_prefix, _keep_temp, Threshold
+	global _temp_dir, _temp_prefix, _keep_temp
 	_keep_temp = args.keep_temp
 
 	if not 1 <= args.threshold <= 99:
 		sys.exit('Threshold must be between 1 and 99.')
-	Threshold = args.threshold
 
 	if args.probe_terminal:
 		report_terminal_capabilities(args.overview)
@@ -1183,7 +1190,7 @@ def main():
 	save_file = os.path.join(work_dir, args.output)
 
 	# check if output file exists
-	if OutputFileExists(save_file, args.mode):
+	if output_file_exists(save_file, args.mode):
 		sys.exit('Output file exists.')
 
 	pages = []
@@ -1191,7 +1198,7 @@ def main():
 
 	try:
 		while True:
-			page = Page(next_id, _temp_prefix)
+			page = Page(next_id, _temp_prefix, args.threshold)
 			next_id += 1
 
 			if not scan_with_retry(page, args, 'Page %d' % (len(pages) + 1)):
@@ -1243,7 +1250,7 @@ def main():
 				print(' Failed.')
 				sys.exit('Error: magick merge failed: ' + err)
 			print(' Done.')
-			ocr(save_file, args.language, merged, total_pages=len(pages))
+			ocr(save_file, args.language, merged, args.resolution, total_pages=len(pages))
 		elif args.mode == 'scan':
 			print('Writing %d page(s)...' % len(pages), end='', flush=True)
 			rc, err = magick_write(page_files + [SaveFormatScanOnly + ':-'],

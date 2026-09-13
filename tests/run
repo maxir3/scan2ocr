@@ -146,6 +146,31 @@ def pipe_scenarios(root, pages):
 	   ['-o', 'J', '-c', '-m', 'scan'], [''],
 	   expect=[r'--mode Color', r'Output:'], reject=[r'thr \d'])
 
+	# Without a threshold the paper noise alone is well above BlankInkPercent,
+	# so the blank warning never fired in colour mode.
+	paper = os.path.join(root, 'paper')
+	os.makedirs(paper, exist_ok=True)
+	subprocess.run(['magick', '-size', '620x877', 'xc:#f0f0f0',
+	                os.path.join(paper, 'p1.pnm')], check=True)
+	go('blank page is flagged in colour mode',
+	   ['-o', 'J2', '-c', '-m', 'scan', '--overview', 'off'], ['q'],
+	   pages_dir=paper, exit_code=1,
+	   expect=[r'looks blank'])
+
+	go('-p is still accepted',
+	   ['-o', 'J3', '-p', '-m', 'scan'], [''],
+	   expect=[r'Output:'])
+
+	# pdfsandwich rasterizes at its own default of 300 dpi unless told otherwise
+	work = os.path.join(root, 'resolution')
+	os.makedirs(work, exist_ok=True)
+	log = os.path.join(work, 'pdfsandwich.log')
+	env = make_env(work, pages, extra={'FAKE_PDFSANDWICH_LOG': log})
+	text, code = run_pipe(['-o', 'R', '-r', '200'], [''], work, env)
+	logged = open(log).read() if os.path.exists(log) else ''
+	check('scan resolution is passed to pdfsandwich', text + logged, code,
+	      expect=[r'-resolution 200'])
+
 	go('deskew and trim',
 	   ['-o', 'K', '--deskew', '--trim', '-m', 'scan'], [''],
 	   expect=[r'Output:'])
@@ -211,6 +236,13 @@ def pty_scenarios(root, pages):
 	go('rotating redraws the preview and reports the angle',
 	   ['-o', 'D', '-m', 'scan'], [b'r', b'\r'],
 	   expect=[r'rot 90', r'(?s)┌─+┐.*┌─+┐'])
+
+	# An arrow key arrives as ESC [ A. Read as three keys, it redrew the
+	# prompt three times; the whole sequence should be swallowed instead.
+	go('arrow keys are ignored',
+	   ['-o', 'D2', '-m', 'scan'], [b'\x1b[A', b'\r'],
+	   expect=[r'Output:'],
+	   reject=[r'(?s)\[Enter\] keep.*\[Enter\] keep'])
 
 	print('\npty scenarios: image viewer is opened only on demand')
 	for name, args, keys, expected_opens in [

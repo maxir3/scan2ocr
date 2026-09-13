@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stand-in for pdfsandwich. Emits the same "Processing page N." lines the real
 # one does, so the progress bar is exercised, then copies input to output.
+echo "$*" >> "${FAKE_PDFSANDWICH_LOG:-/dev/null}"
 OUT=""
 IN=""
 while [[ $# -gt 0 ]]; do

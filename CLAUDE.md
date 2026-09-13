@@ -111,6 +111,8 @@ Two terminal-handling rules that were learned the hard way:
 - **`tty.setraw(fd)` defaults to `TCSAFLUSH`, which discards type-ahead.** Both raw-mode switches pass `TCSANOW` instead, or a key pressed while a page is still being scanned is silently lost.
 - **Child processes get `stdin=DEVNULL`.** `magick`, `scanimage`, `pdfsandwich` and the image viewer would otherwise inherit the terminal and could eat keystrokes meant for the prompt.
 
+Arrow and function keys arrive as an ESC sequence; `read_key()` drains and ignores the whole sequence instead of treating ESC, `[` and `A` as three separate keys that each redraw the prompt.
+
 Keys that arrive during the capability probe are not thrown away either: whatever is not part of the two expected replies is kept in `_pending_input` and served by the next `read_key()`.
 
 Pages whose ink coverage falls below `BlankInkPercent` are flagged with a blank-page warning before the prompt.
@@ -150,7 +152,7 @@ On scanner error (e.g. feeder empty), temp files are cleaned up and the user is 
 1. `scanimage` → `<prefix>_NNN.pnm` (raw, never modified)
 2. `magick` with optional `-deskew`, `-threshold 65%`, optional `-trim`, optional `-rotate` → `<prefix>_NNN.prep.pnm`
 3. `magick -density <resolution> -units PixelsPerInch [-compress Group4] <all prep files>` → `<prefix>.merged.pdf` (PNM carries no DPI; without `-density` the page comes out at 72 dpi, and pdfsandwich clamps the oversized page to A3)
-4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu` → `Output.pdf`
+4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu -resolution <resolution>` → `Output.pdf` (without `-resolution` pdfsandwich rasterizes at 300 dpi regardless of the scan)
 
 Each page gets a unique, never-reused numeric id; page order lives in the page list, not in the filenames. Commands are built as argv lists, so paths with spaces work.
 
