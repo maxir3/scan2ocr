@@ -142,14 +142,14 @@ Two traps worth remembering here:
 
 The raw scan is never modified. Every preview is re-rendered from it with the pipeline `deskew → threshold → trim → rotate`, so rotation and threshold can be changed in any order without loss.
 
-On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. Temp files are removed on exit via `atexit` regardless of how the script terminates, unless `--keep-temp` is given. Output filename and size are printed on completion.
+On scanner error (e.g. feeder empty), temp files are cleaned up and the user is prompted to insert a document and retry. All intermediate files live in a private directory from `tempfile.mkdtemp(prefix='scanner_')`, removed on exit via `atexit` regardless of how the script terminates, unless `--keep-temp` is given. It is a directory rather than a filename prefix on purpose: the prefix carries the output name, and a glob over it treated `[2026]` as a character class. Output filename and size are printed on completion.
 
 ## Pipeline overview
 
 **scan2file (scanocr mode):**
 1. `scanimage` → `<prefix>_NNN.pnm` (raw, never modified)
 2. `magick` with optional `-deskew`, `-threshold 65%`, optional `-trim`, optional `-rotate` → `<prefix>_NNN.prep.pnm`
-3. `magick <all prep files>` → `<prefix>.merged.pdf`
+3. `magick -density <resolution> -units PixelsPerInch [-compress Group4] <all prep files>` → `<prefix>.merged.pdf` (PNM carries no DPI; without `-density` the page comes out at 72 dpi, and pdfsandwich clamps the oversized page to A3)
 4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu` → `Output.pdf`
 
 Each page gets a unique, never-reused numeric id; page order lives in the page list, not in the filenames. Commands are built as argv lists, so paths with spaces work.

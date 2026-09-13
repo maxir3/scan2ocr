@@ -104,6 +104,29 @@ def pipe_scenarios(root, pages):
 	   workname='pct_ocr',
 	   expect=[r'Skonto 3%\.pdf'])
 
+	# glob metacharacters: the temp cleanup used to look for prefix + '*',
+	# and "[2026]" in that pattern is a character class, not a name.
+	tmpdir = tempfile.gettempdir()
+	before = set(glob.glob(os.path.join(tmpdir, 'scanner_*')))
+	go('brackets in the output name',
+	   ['-o', 'Rechnung [2026]', '-m', 'scan'], [''],
+	   workname='brackets',
+	   expect=[r'Rechnung \[2026\]\.pdf'])
+	leftovers = set(glob.glob(os.path.join(tmpdir, 'scanner_*'))) - before
+	check('brackets in the output name: temp files are cleaned up',
+	      'leftovers: %d' % len(leftovers), 0, expect=[r'leftovers: 0'])
+
+	# The test pages are 620x877 px, which is A4 at 75 dpi. Without a density
+	# magick assumed 72 dpi and pdfsandwich turned the oversized page into A3.
+	for name, args in [('scan mode', ['-m', 'scan']), ('ocr mode', [])]:
+		work = go('page size follows the scan resolution (%s)' % name,
+		          ['-o', 'A4', '-r', '75'] + args, [''],
+		          workname='a4_' + name.split()[0], expect=[r'Output:'])
+		info = subprocess.run(['pdfinfo', os.path.join(work, 'A4.pdf')],
+		                      capture_output=True, text=True).stdout
+		check('page size is A4 (%s)' % name, info, 0,
+		      expect=[r'Page size:.*\(A4\)'])
+
 	# Twelve pages, walk back to page 1, rescan it, walk forward again.
 	# The old numbering deleted _10.._19 when touching _1.
 	keys = [''] * 11 + ['b'] * 11 + ['n'] + [''] * 11 + ['q', '']
@@ -323,7 +346,7 @@ def main():
 
 	# Only count temp files this run creates; a killed earlier run may have
 	# left some behind, and that is not what this suite is asserting.
-	before = set(glob.glob('/tmp/scanner_*'))
+	before = set(glob.glob(os.path.join(tempfile.gettempdir(), 'scanner_*')))
 
 	root = tempfile.mkdtemp(prefix='scan2file-tests-')
 	try:
@@ -333,7 +356,7 @@ def main():
 	finally:
 		shutil.rmtree(root, ignore_errors=True)
 
-	leftovers = set(glob.glob('/tmp/scanner_*')) - before
+	leftovers = set(glob.glob(os.path.join(tempfile.gettempdir(), 'scanner_*'))) - before
 	check('no temporary files left behind',
 	      'leftovers: %d' % len(leftovers), 0, expect=[r'leftovers: 0'])
 

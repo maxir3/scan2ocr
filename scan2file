@@ -19,38 +19,38 @@ import argparse
 from subprocess import Popen, PIPE, STDOUT, DEVNULL
 import atexit
 from datetime import datetime
-import glob
 import json
 import os
-import random
 import readline
 import re
 import select
 import shlex
 import shutil
-import string
 import sys
+import tempfile
 import termios
 import time
 import tty
 import urllib.request
 
-_temp_prefix = None
+_temp_dir = None		# private directory holding every intermediate file
+_temp_prefix = None		# path prefix inside it, carries the output name
 _keep_temp = False
 
+# A directory of our own, not a filename prefix: the prefix carries the
+# user's output name, and looking for prefix + '*' with glob turned
+# "Rechnung [2026]" into a character class that matched nothing, so the
+# files were never removed.
 def _cleanup_temp_files():
-	if _temp_prefix is None:
+	if _temp_dir is None:
 		return
-	leftovers = glob.glob(_temp_prefix + '*')
 	if _keep_temp:
-		if leftovers:
-			print('Temp files kept: ' + _temp_prefix + '*')
+		if os.listdir(_temp_dir):
+			print('Temp files kept in ' + _temp_dir)
+		else:
+			os.rmdir(_temp_dir)
 		return
-	for f in leftovers:
-		try:
-			os.remove(f)
-		except OSError:
-			pass
+	shutil.rmtree(_temp_dir, ignore_errors=True)
 
 atexit.register(_cleanup_temp_files)
 
@@ -1141,7 +1141,7 @@ def review_stack(pages, start_index, args):
 def main():
 	args = parser.parse_args()
 
-	global _temp_prefix, _keep_temp, Threshold
+	global _temp_dir, _temp_prefix, _keep_temp, Threshold
 	_keep_temp = args.keep_temp
 
 	if not 1 <= args.threshold <= 99:
@@ -1177,9 +1177,9 @@ def main():
 		if error:
 			sys.exit(error + '.')
 
-	# Path and name (random string) of temporary files without extension
-	RandomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for x in range(6))
-	_temp_prefix = '/tmp/scanner_' + RandomString + '_' + args.output
+	# Every intermediate file lives in a directory of its own, see _cleanup_temp_files
+	_temp_dir = tempfile.mkdtemp(prefix='scanner_')
+	_temp_prefix = os.path.join(_temp_dir, args.output)
 	save_file = os.path.join(work_dir, args.output)
 
 	# check if output file exists
@@ -1227,7 +1227,13 @@ def main():
 			if not pages:
 				sys.exit('No pages left.')
 
-		page_files = [p.preview for p in pages]
+		# PNM carries no resolution, so without -density magick assumes 72 dpi
+		# and a 300 dpi A4 scan becomes a 34x48 inch page (pdfsandwich then
+		# clamps it to A3). Group4 keeps the B/W PDF small; colour stays as is.
+		page_files = ['-density', args.resolution, '-units', 'PixelsPerInch']
+		if not args.color:
+			page_files.extend(['-compress', 'Group4'])
+		page_files.extend(p.preview for p in pages)
 
 		if args.mode == 'scanocr':
 			merged = _temp_prefix + '.merged.pdf'
