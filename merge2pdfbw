@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# merge2pdfbw — merge images and PDFs into one black-and-white PDF.
+#
+# Every input page is rendered at its own resolution, converted to 1-bit B/W
+# and stored with Group4 compression. The result is written next to the first
+# input as <first-input-name>.bw.pdf, in the order the inputs were given.
+set -Eeuo pipefail
+
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+if (($# < 1)); then
+  echo "Usage: $(basename -- "$0") file1 [file2 ...]   (pdf|jpg|jpeg|png|tif|tiff)"
+  echo "Env (optional):"
+  echo "  DEFAULT_DPI=300   (fallback when an image carries no usable resolution)"
+  echo "  THRESHOLD=60%     (B/W threshold, e.g. 55%, 60%, 65%)"
+  exit 1
+fi
+
+DEFAULT_DPI="${DEFAULT_DPI:-300}"
+THRESHOLD="${THRESHOLD:-60%}"
+[[ "$DEFAULT_DPI" =~ ^[0-9]+$ ]] || die "DEFAULT_DPI must be a number"
+
+# ImageMagick: prefer IMv7 (magick), fall back to IMv6 (convert).
+if command -v magick >/dev/null 2>&1; then
+  IM=magick
+elif command -v convert >/dev/null 2>&1; then
+  IM=convert
+else
+  die "ImageMagick is missing (neither magick nor convert found)"
+fi
+
+command -v pdfseparate >/dev/null 2>&1 || die "pdfseparate is missing (poppler)"
+command -v pdfunite    >/dev/null 2>&1 || die "pdfunite is missing (poppler)"
+
+JOBS="$(nproc 2>/dev/null || echo 4)"
+
+# Resolve every input before the cd into the temp directory below.
+STARTDIR="$(pwd -P)"
+abspath() {
+  local p="$1"
+  [[ "$p" == /* ]] || p="${STARTDIR}/${p}"
+  realpath -- "$p"
+}
+
+# Resolution of an image in dpi, or empty if it has none.
+# -units PixelsPerInch matters: PNG stores pixels per centimetre, so without
+# it a 300 dpi PNG reads as 118. [0] limits a multi-page TIFF to its first
+# page; this is safe because the file has a fixed name in the temp directory
+# (magick would interpret brackets in a user-supplied filename).
+get_image_dpi() {
+  "$IM" "${1}[0]" -units PixelsPerInch -format '%y' info: 2>/dev/null \
+    | awk '{ if ($1 ~ /^[0-9]+(\.[0-9]+)?$/) print int($1) }'
+}
+
+# Map implausible resolutions to something usable for documents.
+# Phone photos often claim 72/96 dpi or none at all.
+normalize_dpi() {
+  local dpi="$1"
+  if [[ -z "$dpi" ]] || (( dpi < 150 )); then
+    echo "$DEFAULT_DPI"
+  elif (( dpi > 600 )); then
+    # Very high resolutions rarely help here but cost size and CPU.
+    echo 400
+  else
+    echo "$dpi"
+  fi
+}
+
+# Output name follows the first input.
+FIRST_ABS="$(abspath "$1")"
+OUTDIR="$(dirname -- "$FIRST_ABS")"
+FIRST_BASE="$(basename -- "$FIRST_ABS")"
+OUT="${OUTDIR}/${FIRST_BASE%.*}.bw.pdf"
+
+TMPDIR="$(mktemp -d -t pdfbw.XXXXXX)"
+trap 'rm -rf -- "$TMPDIR"' EXIT
+cd -- "$TMPDIR"
+mkdir -p src work
+shopt -s nullglob
+
+# One line per page: "<single-page pdf> <dpi>". Paths are generated here and
+# contain no spaces, so xargs can split them safely.
+PAGEMAP="$TMPDIR/pages.txt"
+: > "$PAGEMAP"
+page_no=0
+
+# Split a PDF into single pages and append them to PAGEMAP.
+append_pages_from_pdf() {
+  local pdf="$1" dpi="$2" workdir="$3"
+
+  mkdir -p -- "$workdir"
+  pdfseparate "$pdf" "${workdir}/page-%06d.pdf"
+
+  local pages=( "${workdir}"/page-*.pdf )
+  ((${#pages[@]})) || die "pdfseparate produced no pages for: $pdf"
+
+  local p dst
+  for p in "${pages[@]}"; do
+    page_no=$((page_no+1))
+    dst="src/src-$(printf '%06d' "$page_no").pdf"
+    mv -- "$p" "$dst"
+    printf '%s %s\n' "$dst" "$dpi" >> "$PAGEMAP"
+  done
+}
+
+# Turn an image into a PDF (a multi-page TIFF becomes a multi-page PDF) and
+# append its pages. Setting the density gives the PDF page its real size;
+# otherwise a 72 dpi phone photo would become a 34x48 inch page.
+append_pages_from_image() {
+  local img="$1" dpi="$2" workdir="$3"
+
+  mkdir -p -- "$workdir"
+  "$IM" "$img" -units PixelsPerInch -density "$dpi" "${workdir}/img.pdf"
+  append_pages_from_pdf "${workdir}/img.pdf" "$dpi" "${workdir}/split"
+}
+
+# Collect all pages, keeping the order of the inputs. Each input is copied to
+# a fixed name first, so magick never sees a user-supplied filename.
+i=0
+for arg in "$@"; do
+  i=$((i+1))
+  f="$(abspath "$arg")"
+  [[ -r "$f" ]] || die "File not readable: $f"
+
+  ext="${f##*.}"
+  ext="${ext,,}"
+  work="work/in$(printf '%03d' "$i")"
+  mkdir -p -- "$work"
+
+  case "$ext" in
+    pdf)
+      append_pages_from_pdf "$f" "$DEFAULT_DPI" "$work"
+      ;;
+    jpg|jpeg|png|tif|tiff)
+      copy="${work}/input.${ext}"
+      cp -- "$f" "$copy"
+      dpi="$(normalize_dpi "$(get_image_dpi "$copy")")"
+      append_pages_from_image "$copy" "$dpi" "$work"
+      ;;
+    *)
+      die "Unsupported file type: $f (supported: pdf, jpg, jpeg, png, tif, tiff)"
+      ;;
+  esac
+done
+
+# Convert one page to B/W. Group4 is the fax compression for 1-bit images and
+# keeps the PDF small; the density keeps the page size.
+process_one() {
+  local pdf="$1" dpi="$2"
+  "$IM" -density "$dpi" "$pdf" \
+    -colorspace Gray \
+    -auto-level \
+    -threshold "$THRESHOLD" \
+    -type bilevel \
+    -units PixelsPerInch -density "$dpi" \
+    -compress Group4 \
+    "${pdf%.pdf}.out.pdf"
+}
+export -f process_one
+export IM THRESHOLD
+
+echo "Processing ${page_no} page(s) in parallel (${JOBS} jobs)…"
+# shellcheck disable=SC2016 # $1/$2 are expanded by the inner bash, not here
+xargs -n2 -P "$JOBS" bash -c 'process_one "$1" "$2"' _ < "$PAGEMAP"
+
+# The zero-padded page numbers make the glob sort in input order.
+echo "Merging to: $OUT"
+pdfunite src/src-*.out.pdf "$OUT"
+
+echo "Done: $OUT"
