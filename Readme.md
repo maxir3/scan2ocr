@@ -6,16 +6,46 @@ CLI toolset for scanning documents, converting them to black-and-white PDFs, and
 
 # Dependencies
 
-- `python3`
+Required:
+
+- `python3` — standard library only, no `pip install` needed
 - `sane` / `scanimage` — scanner access
 - `imagemagick` (IMv7, `magick`) — image conversion, B/W optimization, rotation
 - `pdfsandwich` — OCR orchestrator (wraps tesseract)
-- `tesseract` — OCR engine
-- `feh`, `display`, `eog`, or `xdg-open` — image preview during scanning (first found is used)
-- `python-prompt_toolkit` — live filename autocomplete (optional, falls back to readline)
-- `chafa` — inline image page overview (optional, falls back to a character grid)
-- `poppler` / `pdftotext` — text extraction for LLM suggestion (optional, `--llm` only)
-- `ollama` — local LLM for filename suggestion (optional, `--llm` only)
+- `tesseract` — OCR engine, plus the language data for the documents you scan (`tesseract-data-deu` for the default `-l ger`)
+
+Optional:
+
+- `feh`, `display`, `eog`, or `xdg-open` — full-size page view with `v` (first found is used)
+- `python-prompt_toolkit` — live filename autocomplete (falls back to readline)
+- `chafa` — real page images inside the terminal (falls back to a character grid)
+- `poppler` — `pdftotext` for `--llm`; `pdfseparate` / `pdfunite` for `merge2pdfbw`
+- `ollama` — local LLM for filename suggestions (`--llm` only, see below)
+
+## Installing on Arch Linux
+
+```bash
+sudo pacman -S --needed python sane imagemagick tesseract tesseract-data-deu
+sudo pacman -S --needed feh python-prompt_toolkit chafa poppler ollama   # optional
+yay -S pdfsandwich   # from the AUR, with the AUR helper of your choice
+```
+
+For other OCR languages install `tesseract-data-<lang>`, e.g. `tesseract-data-eng`.
+
+## LLM filename suggestion (optional)
+
+`--llm` is a convenience, not a requirement. `scan2file` does not call the
+`ollama` program; it talks to the ollama server over HTTP at
+`localhost:11434`. So the server has to be running and the model pulled:
+
+```bash
+sudo systemctl enable --now ollama
+ollama pull mistral          # or whatever OllamaModel is set to
+```
+
+If the server is not running, the step is skipped silently and the file keeps
+its name. If the server runs but the request fails (e.g. the model is not
+pulled), a one-line message says so. `OllamaModel = ''` disables it entirely.
 
 # Configuration
 
@@ -133,6 +163,19 @@ Thumbnails are fitted, never stretched, so a rotated page appears as a landscape
 The raw scan is kept untouched and every preview is re-rendered from it, so rotation and threshold can be changed in any order and any number of times without quality loss.
 
 On scanner error (e.g. feeder empty), the user is prompted to insert a document and retry.
+
+# merge2pdfbw
+
+Merges images and PDFs into one black-and-white PDF, `<first-input>.bw.pdf`
+next to the first input:
+
+```bash
+./merge2pdfbw scan1.jpg scan2.png letter.pdf     # -> scan1.bw.pdf
+THRESHOLD=55% DEFAULT_DPI=300 ./merge2pdfbw photo.jpg
+```
+
+Each page keeps its own resolution; images without a usable one (phone photos
+often claim 72 dpi) are treated as `DEFAULT_DPI`. Needs ImageMagick and poppler.
 
 # Tests
 

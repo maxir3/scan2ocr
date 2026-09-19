@@ -93,9 +93,18 @@ def extract_pdf_text(pdf_path):
 		pass
 	return ''
 
+OllamaURL = 'http://localhost:11434'
+
+def ollama_running():
+	"""True if an ollama server answers. --llm is a convenience, so a server
+	that is not running is not an error: the step is skipped silently."""
+	try:
+		with urllib.request.urlopen(OllamaURL + '/api/tags', timeout=2):
+			return True
+	except OSError:
+		return False
+
 def suggest_filename(pdf_path):
-	if not OllamaModel:
-		return None
 	text = extract_pdf_text(pdf_path).strip()
 	if not text:
 		print('(pdftotext returned no text — is poppler installed?)')
@@ -116,7 +125,7 @@ def suggest_filename(pdf_path):
 	payload = json.dumps({'model': OllamaModel, 'prompt': prompt, 'stream': False}).encode()
 	try:
 		req = urllib.request.Request(
-			'http://localhost:11434/api/generate',
+			OllamaURL + '/api/generate',
 			data=payload,
 			headers={'Content-Type': 'application/json'}
 		)
@@ -126,7 +135,7 @@ def suggest_filename(pdf_path):
 			keywords = re.sub(r'_+', '_', keywords).strip('_')
 			return keywords if keywords else None
 	except Exception as e:
-		print('(ollama not reachable: ' + str(e) + ')')
+		print('(ollama request failed: ' + str(e) + ')')
 		return None
 
 try:
@@ -244,6 +253,8 @@ def prompt_filename(directory, ext):
 
 def llm_rename(current_path):
 	"""Post-OCR: ask LLM for a suggestion, then offer a rename prompt."""
+	if not OllamaModel or not ollama_running():
+		return current_path
 	print('Asking LLM for filename suggestion...')
 	suggestion = suggest_filename(current_path)
 	date_prefix = datetime.now().strftime('%Y-%m-%d')

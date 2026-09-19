@@ -7,20 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A CLI toolset for scanning documents, converting them to black-and-white PDFs, and running OCR to produce searchable PDFs. There are two main scripts:
 
 - **`scan2file`** — Python 3 script. Drives a physical scanner via SANE (`scanimage`), optimizes images (via ImageMagick `magick`), and OCRs via `pdfsandwich` (which wraps tesseract). Supports single-page and multi-page mode.
-- **`ocrscript`** — Bash script. Takes existing image/PDF files, converts them to a B/W PDF via `merge2pdfbw`, then OCRs via `pdfsandwich`. Moves originals to a `done/` subdirectory on success.
+- **`ocrscript`** — Bash script. Takes existing image/PDF files, converts them to a B/W PDF via `merge2pdfbw`, then OCRs via `pdfsandwich`. Moves originals to a `done/` subdirectory on success. Not tracked in git (`.gitignore`); only the local copy exists.
+- **`merge2pdfbw`** — Bash script. Merges images/PDFs into one Group4 B/W PDF, `<first-input>.bw.pdf`. Inputs are copied to fixed names in a temp directory before magick sees them (brackets in a filename are subimage syntax to magick), and images are converted with `-units PixelsPerInch -density <dpi>` so the page keeps its real size — PNG stores pixels per *centimetre*.
 
 ## External dependencies
 
 - `sane` / `scanimage` — scanner access (scan2file only)
-- `imagemagick` / `magick` — image format conversion, B/W threshold optimization, and rotation (`mogrify`); requires IMv7
+- `imagemagick` / `magick` — image format conversion, B/W threshold optimization, and rotation; requires IMv7
 - `feh`, `display`, `eog`, or `xdg-open` — image preview during scanning (first found is used)
 - `pdfsandwich` — OCR orchestrator (wraps tesseract); used by all scripts
-- `merge2pdfbw` — merges images/PDFs into a single B/W PDF (ocrscript only); may live at `~/.bin/merge2pdfbw`
+- `merge2pdfbw` — merges images/PDFs into a single B/W PDF (ocrscript only); lives in this repo, needs poppler (`pdfseparate`, `pdfunite`)
 - `tesseract` — OCR engine (invoked by pdfsandwich)
 - `python-prompt_toolkit` — live autocomplete in filename prompt (optional; falls back to readline)
 - `chafa` — inline image page overview (optional; falls back to a character grid). Only produces a real image when the terminal speaks the kitty graphics protocol (ghostty) or sixel (foot); Alacritty supports neither.
 - `poppler` / `pdftotext` — text extraction for LLM filename suggestion (optional, `--llm` only)
-- `ollama` — local LLM for filename suggestion (optional, `--llm` only); default model: `mistral`
+- `ollama` — local LLM for filename suggestion (optional, `--llm` only); default model: `mistral`. Reached over HTTP at `localhost:11434`, not as a binary. `llm_rename()` checks `ollama_running()` first and skips the step silently when the server is down — it is a convenience, never a reason to fail or nag
 
 ## Configuration (scan2file)
 
