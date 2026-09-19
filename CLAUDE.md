@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A CLI toolset for scanning documents, converting them to black-and-white PDFs, and running OCR to produce searchable PDFs. There are two main scripts:
 
 - **`scan2file`** — Python 3 script. Drives a physical scanner via SANE (`scanimage`), optimizes images (via ImageMagick `magick`), and OCRs via `pdfsandwich` (which wraps tesseract). Supports single-page and multi-page mode.
-- **`ocrscript`** — Bash script. Takes existing image/PDF files, converts them to a B/W PDF via `merge2pdfbw`, then OCRs via `pdfsandwich`. Moves originals to an `erledigt/` subdirectory on success.
+- **`ocrscript`** — Bash script. Takes existing image/PDF files, converts them to a B/W PDF via `merge2pdfbw`, then OCRs via `pdfsandwich`. Moves originals to a `done/` subdirectory on success.
 
 ## External dependencies
 
@@ -160,7 +160,7 @@ Each page gets a unique, never-reused numeric id; page order lives in the page l
 1. Copy inputs to tmpdir
 2. `merge2pdfbw` on all inputs → `name.bw.pdf`
 3. `pdfsandwich -quiet -layout none -unpo '' -lang deu` → `name.bw.ocr.pdf`
-4. Move result to start directory; move originals to `erledigt/`
+4. Move result to start directory; move originals to `done/`
 
 ## Language codes
 
