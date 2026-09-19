@@ -107,10 +107,11 @@ In a terminal that answers the capability probe (sixel in foot, the kitty protoc
 
 `--probe-terminal` reports what was detected and which backend that selects, then exits. Use it instead of guessing why a terminal shows character art.
 
-Two terminal-handling rules that were learned the hard way:
+Three terminal-handling rules that were learned the hard way:
 
 - **`tty.setraw(fd)` defaults to `TCSAFLUSH`, which discards type-ahead.** Both raw-mode switches pass `TCSANOW` instead, or a key pressed while a page is still being scanned is silently lost.
 - **Child processes get `stdin=DEVNULL`.** `magick`, `scanimage`, `pdfsandwich` and the image viewer would otherwise inherit the terminal and could eat keystrokes meant for the prompt.
+- **Raw keys are read with `os.read(fd, …)`, never `sys.stdin.read(1)`.** The buffered reader pulls a whole `ESC [ A` into Python's own buffer, where `select()` on the fd no longer sees it, so the rest came back as two more keys. For the same reason the capability probe collects bytes and decodes them once as UTF-8: a key typed during the probe may be multi-byte (`ä` decoded as latin-1 became `Ã` and `¤`).
 
 Arrow and function keys arrive as an ESC sequence; `read_key()` drains and ignores the whole sequence instead of treating ESC, `[` and `A` as three separate keys that each redraw the prompt.
 

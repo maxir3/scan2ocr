@@ -244,6 +244,13 @@ def pty_scenarios(root, pages):
 	   expect=[r'Output:'],
 	   reject=[r'(?s)\[Enter\] keep.*\[Enter\] keep'])
 
+	# Keys are read byte by byte; a two-byte UTF-8 key must still count as
+	# one key and redraw the prompt once, not twice.
+	go('a non-ASCII key counts as one key',
+	   ['-o', 'D3', '-m', 'scan'], ['ä'.encode(), b'\r'],
+	   expect=[r'Output:', r'(?s)\[Enter\] keep.*\[Enter\] keep'],
+	   reject=[r'(?s)(\[Enter\] keep.*){3}'])
+
 	print('\npty scenarios: image viewer is opened only on demand')
 	for name, args, keys, expected_opens in [
 		('viewer stays closed without [v]', ['-m', 'scan'], [b'\r'], 0),
@@ -304,6 +311,17 @@ def pty_scenarios(root, pages):
 	                  [b'\r', b'q', b'\r', b'\r'], work, env, preload=True)
 	check('keys typed before the script starts are not discarded', text, 0,
 	      expect=[r'Scanned 2 page', r'Output:'])
+
+	# The same path for a non-ASCII key: it lands in the probe's reply
+	# buffer and must still come out as one key, not as two latin-1 halves.
+	work = os.path.join(root, 'pty_typeahead_utf8')
+	os.makedirs(work, exist_ok=True)
+	env = make_env(work, pages)
+	text, _ = run_pty(['-o', 'T2', '-m', 'scan'], ['ä'.encode(), b'\r'],
+	                  work, env, preload=True)
+	check('a non-ASCII key typed ahead counts as one key', text, 0,
+	      expect=[r'Output:', r'(?s)\[Enter\] keep.*\[Enter\] keep'],
+	      reject=[r'(?s)(\[Enter\] keep.*){3}'])
 
 	# Typed while page 2 is being scanned, i.e. after the probe. read_key()
 	# must not flush the terminal, or these vanish.

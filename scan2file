@@ -351,7 +351,15 @@ def read_key(message):
 	try:
 		tty.setraw(fd, termios.TCSANOW)	# keep type-ahead, see above
 		while True:
-			char = sys.stdin.read(1)
+			# os.read, not sys.stdin.read(1): the buffered reader pulls the
+			# whole ESC [ A into its own buffer, where the select() below no
+			# longer sees it, and [ and A then come back as two more keys.
+			char = os.read(fd, 1)
+			if char and char[0] >= 0xc0:
+				# Lead byte of a non-ASCII key (ä, ö, ...): read the rest of
+				# its UTF-8 sequence so it counts as one key
+				char += os.read(fd, 1 if char[0] < 0xe0 else 2 if char[0] < 0xf0 else 3)
+			char = char.decode('utf-8', errors='replace')
 			if char != '\x1b':
 				break
 			# An arrow or function key arrives as ESC plus a few more bytes.
@@ -400,7 +408,10 @@ def detect_graphics_protocol():
 	except termios.error:
 		return None
 
-	response = ''
+	# Collected as bytes and decoded once at the end: the terminal's replies
+	# are ASCII, but a key typed meanwhile may be a multi-byte UTF-8
+	# character, and a read can end in the middle of one.
+	response = b''
 	try:
 		# TCSANOW, not tty.setraw()'s default TCSAFLUSH: flushing would throw
 		# away anything the user has already typed ahead.
@@ -412,11 +423,11 @@ def detect_graphics_protocol():
 			ready, _, _ = select.select([fd], [], [], 0.1)
 			if not ready:
 				continue
-			chunk = os.read(fd, 256).decode('latin-1')
+			chunk = os.read(fd, 256)
 			if not chunk:
 				break
 			response += chunk
-			if response.endswith('c'):	# DA1 terminator, both answers are in
+			if response.endswith(b'c'):	# DA1 terminator, both answers are in
 				break
 
 		# Pick up anything that arrived late, so a stray tail of the reply is
@@ -425,11 +436,12 @@ def detect_graphics_protocol():
 			chunk = os.read(fd, 256)
 			if not chunk:
 				break
-			response += chunk.decode('latin-1')
+			response += chunk
 	except (OSError, ValueError):
 		return None
 	finally:
 		termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+	response = response.decode('utf-8', errors='replace')
 
 	kitty = '_Gi=31;OK' in response
 	m = re.search(r'\x1b\[\?([0-9;]*)c', response)
