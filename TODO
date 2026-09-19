@@ -1,41 +1,44 @@
-# TODO / Ideen
+# TODO / Ideas
 
-## Konfiguration auslagern (zurückgestellt, Idee für später)
+## Move configuration out of the script (deferred, idea for later)
 
-Die Konfigurationsvariablen stehen im Kopf von `scan2file` (device,
+The configuration variables live in the header of `scan2file` (device,
 AdditionalScanOptions, SaveFormat*, TempFormat, OllamaModel, Threshold,
-BlankInkPercent). Wer sie anpasst, ändert das Skript selbst — damit
-kollidiert jedes `git pull` mit den lokalen Änderungen.
+BlankInkPercent). Anyone who adjusts them edits the script itself, so every
+`git pull` collides with the local changes.
 
-Idee: Werte aus `~/.config/scan2file.conf` lesen (einfaches key=value oder
-INI via configparser), die Werte im Skriptkopf bleiben als Defaults stehen.
-Reihenfolge: Default < Konfigdatei < Kommandozeilenoption.
-Dann ist das Skript per git aktualisierbar, ohne die eigene Konfiguration
-zu verlieren.
+Idea: read values from `~/.config/scan2file.conf` (plain key=value, or INI
+via configparser); the values in the script header stay as defaults.
+Precedence: default < config file < command-line option.
+The script can then be updated via git without losing one's own
+configuration.
 
-## Offen
+## Open
 
-- OCR-only Modus (`-m ocr`) ist nicht implementiert. `ocrscript` baut dieselbe
-  Kette in Bash nach — naheliegend wäre, vorhandene Bilder/PDFs als Seiten
-  einzulesen und den Rest der scan2file-Pipeline unverändert zu nutzen.
-- ADF (Dokumenteneinzug) für Mehrseitenscans wird nicht unterstützt. Mit dem
-  Seitenmodell fast geschenkt: `scanimage --batch=<prefix>_%03d.pnm` scannt
-  den ganzen Einzug, danach `review_stack(pages, 0, args)` über alle Seiten.
+- OCR-only mode (`-m ocr`) is not implemented. `ocrscript` rebuilds the same
+  chain in Bash. The obvious approach would be to read existing images/PDFs
+  in as pages and use the rest of the scan2file pipeline unchanged.
+- ADF (automatic document feeder) is not supported for multi-page scans.
+  With the page model this comes almost for free: `scanimage
+  --batch=<prefix>_%03d.pnm` scans the whole feeder, followed by
+  `review_stack(pages, 0, args)` over all pages.
 
-## Erledigt (2026-09-13)
+## Done (2026-09-13)
 
-- PDFs waren A3 statt A4: PNM kennt keine DPI, magick nahm 72 an, pdfsandwich
-  deckelte die 34x48-Zoll-Seite auf A3. Jetzt `-density <resolution>` beim
-  Zusammenführen, dazu `-compress Group4` für S/W (rund 50x kleiner).
-- Temp-Dateien blieben liegen, wenn der Ausgabename `[` oder `*` enthielt
-  (Glob-Metazeichen im Aufräum-Muster). Jetzt eigenes Verzeichnis per
-  `tempfile.mkdtemp`, entfernt mit `shutil.rmtree`.
-- Scan-Auflösung geht als `-resolution` an pdfsandwich, statt dass es
-  intern mit 300 dpi rastert.
-- `[v]` ohne Bildbetrachter meldet das jetzt.
-- Leerseitenerkennung im Farbmodus misst auf einer geschwellten Kopie.
-- Pfeil- und Funktionstasten werden in `read_key` als ganze ESC-Sequenz
-  verschluckt statt als drei Einzeltasten verarbeitet.
-- Aufgeräumt: Threshold als Parameter an `Page`, `pipe_to_chafa()` für beide
-  chafa-Aufrufe, `-p/--progress/--no-progress` per BooleanOptionalAction,
-  `ocr()` nennt bei Fehler den Exit-Code, `output_file_exists` in snake_case.
+- PDFs came out as A3 instead of A4: PNM carries no DPI, magick assumed 72,
+  and pdfsandwich clamped the 34x48-inch page to A3. Now `-density
+  <resolution>` when merging, plus `-compress Group4` for B/W (roughly 50x
+  smaller).
+- Temp files were left behind when the output name contained `[` or `*`
+  (glob metacharacters in the cleanup pattern). Now a dedicated directory
+  via `tempfile.mkdtemp`, removed with `shutil.rmtree`.
+- The scan resolution is passed to pdfsandwich as `-resolution` instead of
+  it rasterizing internally at 300 dpi.
+- `[v]` without an image viewer now reports that.
+- Blank-page detection in color mode measures on a thresholded copy.
+- Arrow and function keys are swallowed as a whole ESC sequence in
+  `read_key` instead of being processed as three separate keys.
+- Clean-ups: threshold as a parameter to `Page`, `pipe_to_chafa()` for both
+  chafa calls, `-p/--progress/--no-progress` via BooleanOptionalAction,
+  `ocr()` reports the exit code on failure, `output_file_exists` in
+  snake_case.
