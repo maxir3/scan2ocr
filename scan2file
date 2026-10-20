@@ -956,7 +956,7 @@ def draw_progress_bar(done, total, width=40):
 	sys.stderr.flush()
 
 # Do ocr on the merged pdf
-def ocr(save, language, merged_pdf, resolution, total_pages=1):
+def ocr(save, language, merged_pdf, resolution, total_pages=1, color=False):
 	my_env = os.environ.copy()
 	my_env["MALLOC_CHECK_"] = '0'
 
@@ -965,9 +965,13 @@ def ocr(save, language, merged_pdf, resolution, total_pages=1):
 
 	# -resolution: pdfsandwich would otherwise rasterize at its own default
 	# of 300 dpi, and a 600 dpi scan would be downsampled before OCR.
+	# -rgb: pdfsandwich re-rasterizes every page as 1-bit black and white
+	# by default, which silently threw away the colour of a -c scan.
 	cmd = ['stdbuf', '-oL', 'pdfsandwich', '-nopreproc', '-layout', 'none',
-	       '-nthreads', '1', '-lang', language, '-resolution', str(resolution),
-	       '-o', save + '.' + SaveFormatOCR, merged_pdf]
+	       '-nthreads', '1', '-lang', language, '-resolution', str(resolution)]
+	if color:
+		cmd.append('-rgb')
+	cmd.extend(['-o', save + '.' + SaveFormatOCR, merged_pdf])
 
 	# "Processing page N." appears just before tesseract starts on page N,
 	# so page N-1 is complete at that point. We lag by one so 100% means done.
@@ -1273,7 +1277,8 @@ def main():
 				print(' Failed.')
 				sys.exit('Error: magick merge failed: ' + err)
 			print(' Done.')
-			ocr(save_file, args.language, merged, args.resolution, total_pages=len(pages))
+			ocr(save_file, args.language, merged, args.resolution,
+			    total_pages=len(pages), color=args.color)
 		elif args.mode == 'scan':
 			print('Writing %d page(s)...' % len(pages), end='', flush=True)
 			rc, err = magick_write(page_files + [SaveFormatScanOnly + ':-'],

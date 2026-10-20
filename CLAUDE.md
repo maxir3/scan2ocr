@@ -154,7 +154,7 @@ On scanner error (e.g. feeder empty), temp files are cleaned up and the user is 
 1. `scanimage` → `<prefix>_NNN.pnm` (raw, never modified)
 2. `magick` with optional `-deskew`, `-threshold 65%`, optional `-trim`, optional `-rotate` → `<prefix>_NNN.prep.pnm`
 3. `magick -density <resolution> -units PixelsPerInch [-compress Group4] <all prep files>` → `<prefix>.merged.pdf` (PNM carries no DPI; without `-density` the page comes out at 72 dpi, and pdfsandwich clamps the oversized page to A3)
-4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu -resolution <resolution>` → `Output.pdf` (without `-resolution` pdfsandwich rasterizes at 300 dpi regardless of the scan)
+4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu -resolution <resolution> [-rgb]` → `Output.pdf` (without `-resolution` pdfsandwich rasterizes at 300 dpi regardless of the scan; without `-rgb` it rasterizes every page as 1-bit black and white, so `-c` passes `-rgb`)
 
 Each page gets a unique, never-reused numeric id; page order lives in the page list, not in the filenames. Commands are built as argv lists, so paths with spaces work.
 

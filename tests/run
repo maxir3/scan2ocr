@@ -171,6 +171,18 @@ def pipe_scenarios(root, pages):
 	check('scan resolution is passed to pdfsandwich', text + logged, code,
 	      expect=[r'-resolution 200'])
 
+	# pdfsandwich rasterizes every page as 1-bit black and white unless -rgb
+	# is given, so a colour scan came out of OCR as black and white.
+	log = os.path.join(work, 'pdfsandwich-colour.log')
+	env = make_env(work, pages, extra={'FAKE_PDFSANDWICH_LOG': log})
+	text, code = run_pipe(['-o', 'RC', '-c'], [''], work, env)
+	logged = open(log).read() if os.path.exists(log) else ''
+	check('colour mode asks pdfsandwich for rgb', text + logged, code,
+	      expect=[r'-rgb'])
+	check('b/w mode does not ask pdfsandwich for rgb',
+	      open(os.path.join(work, 'pdfsandwich.log')).read(), 0,
+	      reject=[r'-rgb'])
+
 	go('deskew and trim',
 	   ['-o', 'K', '--deskew', '--trim', '-m', 'scan'], [''],
 	   expect=[r'Output:'])
