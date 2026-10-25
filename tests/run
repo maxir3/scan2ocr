@@ -140,7 +140,7 @@ def pipe_scenarios(root, pages):
 
 	go('scan and OCR end to end',
 	   ['-o', 'I', '-mu'], ['', 'q', ''],
-	   expect=[r'OCRing', r'100%', r'Output:.*I\.pdf'])
+	   expect=[r'OCRing', r'100%.*done', r'Output:.*I\.pdf'])
 
 	go('colour mode',
 	   ['-o', 'J', '-c', '-m', 'scan'], [''],
@@ -170,6 +170,11 @@ def pipe_scenarios(root, pages):
 	logged = open(log).read() if os.path.exists(log) else ''
 	check('scan resolution is passed to pdfsandwich', text + logged, code,
 	      expect=[r'-resolution 200'])
+	# -nthreads 1 once forced sequential OCR for the sake of the progress
+	# bar; pages are OCRed in parallel now, with tesseract's own OpenMP
+	# threads capped so the processes do not fight over the cores.
+	check('pages are OCRed in parallel', logged, 0,
+	      expect=[r'OMP_THREAD_LIMIT=1'], reject=[r'-nthreads 1\b'])
 
 	# pdfsandwich rasterizes every page as 1-bit black and white unless -rgb
 	# is given, so a colour scan came out of OCR as black and white.

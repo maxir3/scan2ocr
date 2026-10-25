@@ -14,6 +14,7 @@ BlankInkPercent=0.1		# Pages with less ink than this are flagged as blank
 OverviewThumbWidth=26	# Width of one page thumbnail in the text overview
 OverviewThumbHeight=18	# Height of one page thumbnail (26x18 keeps A4 proportions)
 OverviewMode='auto'		# auto | graphics | window | text | off (see --overview)
+OcrThreads=0			# Pages OCRed in parallel; 0 = one per CPU (pdfsandwich's guess)
 
 import argparse
 from subprocess import Popen, PIPE, STDOUT, DEVNULL
@@ -945,20 +946,26 @@ def ink_coverage(path, threshold=None):
 		return None
 
 
-def draw_progress_bar(done, total, width=40):
+def draw_progress_bar(done, total, width=40, label=''):
 	if total <= 0:
 		return
 	fraction = done / total
 	filled = int(round(fraction * width))
 	bar = '█' * filled + '░' * (width - filled)
 	pct = int(fraction * 100)
-	sys.stderr.write('\r[%s] %3d%%  (%d/%d)' % (bar, pct, done, total))
+	# Pad past the longest label so a shorter one overwrites it completely.
+	sys.stderr.write('\r[%s] %3d%%  (%d/%d) %-8s' % (bar, pct, done, total, label))
 	sys.stderr.flush()
 
 # Do ocr on the merged pdf
 def ocr(save, language, merged_pdf, resolution, total_pages=1, color=False):
 	my_env = os.environ.copy()
 	my_env["MALLOC_CHECK_"] = '0'
+	# pdfsandwich runs one tesseract per page, OcrThreads pages at a time.
+	# tesseract would open up to four OpenMP threads of its own on top of
+	# that; with many pages in flight they only fight over the cores.
+	if OcrThreads != 1:
+		my_env.setdefault('OMP_THREAD_LIMIT', '1')
 
 	if language == 'ger':
 		language = 'deu'
@@ -968,33 +975,37 @@ def ocr(save, language, merged_pdf, resolution, total_pages=1, color=False):
 	# -rgb: pdfsandwich re-rasterizes every page as 1-bit black and white
 	# by default, which silently threw away the colour of a -c scan.
 	cmd = ['stdbuf', '-oL', 'pdfsandwich', '-nopreproc', '-layout', 'none',
-	       '-nthreads', '1', '-lang', language, '-resolution', str(resolution)]
+	       '-lang', language, '-resolution', str(resolution)]
+	if OcrThreads > 0:
+		cmd.extend(['-nthreads', str(OcrThreads)])
 	if color:
 		cmd.append('-rgb')
 	cmd.extend(['-o', save + '.' + SaveFormatOCR, merged_pdf])
 
-	# "Processing page N." appears just before tesseract starts on page N,
-	# so page N-1 is complete at that point. We lag by one so 100% means done.
+	# "Processing page N." appears just before tesseract starts on page N.
+	# Pages run in parallel, so the lines arrive in any order and a batch
+	# of them at once; all we can honestly count is how many have started.
+	# The bar reaches 100% only when pdfsandwich itself has finished.
 	page_re = re.compile(r'^Processing page (\d+)\.')
 	other_lines = []
+	started = 0
 
 	sys.stderr.write('OCRing...\n')
-	draw_progress_bar(0, total_pages)
+	draw_progress_bar(0, total_pages, label='started')
 
 	p = Popen(cmd, stdin=DEVNULL, stdout=PIPE, stderr=STDOUT, env=my_env)
 
 	with p.stdout:
 		for raw_line in p.stdout:
 			line = raw_line.decode('utf-8', errors='replace').rstrip('\n')
-			m = page_re.match(line)
-			if m:
-				pages_before = int(m.group(1)) - 1
-				draw_progress_bar(pages_before, total_pages)
+			if page_re.match(line):
+				started = min(started + 1, total_pages)
+				draw_progress_bar(started, total_pages, label='started')
 			else:
 				other_lines.append(line)
 
 	p.wait()
-	draw_progress_bar(total_pages, total_pages)
+	draw_progress_bar(total_pages, total_pages, label='done')
 	sys.stderr.write('\n')
 
 	if p.returncode != 0:

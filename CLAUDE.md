@@ -37,6 +37,7 @@ OllamaModel = 'mistral'      # ollama model for --llm; set to '' to disable
 Threshold = 65               # default B/W threshold in percent; override with -t
 BlankInkPercent = 0.1        # pages below this ink coverage are flagged as blank
 OverviewMode = 'auto'        # default for --overview: auto|graphics|window|text|off
+OcrThreads = 0               # pages OCRed in parallel; 0 = one per CPU (pdfsandwich's guess)
 ```
 
 Moving this into `~/.config/scan2file.conf` is a deferred idea — see `TODO`.
@@ -154,7 +155,7 @@ On scanner error (e.g. feeder empty), temp files are cleaned up and the user is 
 1. `scanimage` → `<prefix>_NNN.pnm` (raw, never modified)
 2. `magick` with optional `-deskew`, `-threshold 65%`, optional `-trim`, optional `-rotate` → `<prefix>_NNN.prep.pnm`
 3. `magick -density <resolution> -units PixelsPerInch [-compress Group4] <all prep files>` → `<prefix>.merged.pdf` (PNM carries no DPI; without `-density` the page comes out at 72 dpi, and pdfsandwich clamps the oversized page to A3)
-4. `pdfsandwich -nopreproc -layout none -nthreads 1 -lang deu -resolution <resolution> [-rgb]` → `Output.pdf` (without `-resolution` pdfsandwich rasterizes at 300 dpi regardless of the scan; without `-rgb` it rasterizes every page as 1-bit black and white, so `-c` passes `-rgb`)
+4. `pdfsandwich -nopreproc -layout none -lang deu -resolution <resolution> [-nthreads N] [-rgb]` → `Output.pdf` (without `-resolution` pdfsandwich rasterizes at 300 dpi regardless of the scan; without `-rgb` it rasterizes every page as 1-bit black and white, so `-c` passes `-rgb`). Pages are OCRed in parallel, one tesseract per page: `-nthreads` is only passed when `OcrThreads` is non-zero, otherwise pdfsandwich uses one thread per CPU. `OMP_THREAD_LIMIT=1` caps tesseract's own OpenMP threads, which would otherwise oversubscribe the cores. The progress bar counts pages *started* (the `Processing page N.` lines arrive in any order) and shows `done` only when pdfsandwich exits. An earlier `-nthreads 1` existed solely so the bar could assume page N-1 was finished when page N began.
 
 Each page gets a unique, never-reused numeric id; page order lives in the page list, not in the filenames. Commands are built as argv lists, so paths with spaces work.
 
